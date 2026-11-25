@@ -1,0 +1,255 @@
+import AppKit
+import ClipboardCore
+import Combine
+import Foundation
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    let store = ClipboardStore()
+    private lazy var monitor = PasteboardMonitor(pasteboard: .general, store: store)
+    private lazy var panelController = ClipboardPanelController(
+        store: store,
+        onOpenSettings: { [weak self] in self?.openSettings() },
+        onConfirmClearHistory: { [weak self] in self?.confirmClearHistory() }
+    )
+    private lazy var settingsController = SettingsWindowController(
+        store: store,
+        onConfirmClearHistory: { [weak self] in self?.confirmClearHistory() }
+    )
+
+    private var statusItem: NSStatusItem?
+    private var cancellables = Set<AnyCancellable>()
+    private var suppressNextActivatePanel = false
+    private var isClearingAlertOpen = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupStatusItem()
+        observeStoreChanges()
+        monitor.start()
+
+        let args = Set(CommandLine.arguments)
+        if args.contains("--settings") {
+            openSettings()
+            return
+        }
+        if args.contains("--favorites") {
+            showPanel(tab: .favorites)
+            return
+        }
+        if shouldLaunchSilently(arguments: args) {
+            ClipboardLog.app.info("launched_silently")
+            return
+        }
+
+        // 显式启动（如从访达打开或由 Hotkey 在未运行时拉起）直接展示历史面板。
+        showPanel(tab: .history)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        monitor.stop()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if panelController.isVisible {
+            // 同一次 openApplication 激活可能先触发 didBecomeActive 再触发 reopen；
+            // 仅在面板已显示一段时间后再次收到 reopen 时才执行收起切换。
+            if panelController.shownDuration > 0.35 {
+                panelController.hide(deactivateApp: true)
+            }
+        } else {
+            showPanel(tab: .history)
+        }
+        return true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if suppressNextActivatePanel {
+            suppressNextActivatePanel = false
+            return
+        }
+        if isClearingAlertOpen || settingsController.isVisible {
+            return
+        }
+        if !panelController.isVisible {
+            showPanel(tab: .history)
+        }
+    }
+
+    func applicationWillHide(_ notification: Notification) {
+        panelController.hide(deactivateApp: false)
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        if !isClearingAlertOpen {
+            panelController.hide(deactivateApp: false)
+        }
+    }
+
+    // MARK: - Launch Mode Detection
+
+    private func shouldLaunchSilently(arguments: Set<String>) -> Bool {
+        if arguments.contains("--background") || arguments.contains("--silent") {
+            return true
+        }
+        // 通过系统登录项自启时保持静默常驻菜单栏，不无故弹窗。
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+           event.eventID == kAEOpenApplication,
+           let prop = event.paramDescriptor(forKeyword: keyAEPropData),
+           prop.enumCodeValue == keyAELaunchedAsLogInItem {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Panel & Settings Navigation
+
+    func showPanel(tab: ClipboardTab) {
+        store.refreshAccessState()
+        panelController.show(tab: tab)
+    }
+
+    func openSettings() {
+        suppressNextActivatePanel = true
+        panelController.hide(deactivateApp: false)
+        settingsController.show()
+    }
+
+    func confirmClearHistory() {
+        guard !store.history.isEmpty else { return }
+        isClearingAlertOpen = true
+        suppressNextActivatePanel = true
+        panelController.hide(deactivateApp: false)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "清空最近历史？"
+        alert.informativeText = "将删除全部 \(store.history.count) 条最近记录。长期收藏的条目与图片会完整保留。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "清空最近")
+        alert.addButton(withTitle: "取消")
+
+        let response = alert.runModal()
+        isClearingAlertOpen = false
+        if response == .alertFirstButtonReturn {
+            store.clearHistory()
+        }
+    }
+
+    // MARK: - Status Bar
+
+    private func setupStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = item
+        updateStatusBarAppearance()
+
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+    }
+
+    private func observeStoreChanges() {
+        store.$settings
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateStatusBarAppearance()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateStatusBarAppearance() {
+        guard let button = statusItem?.button else { return }
+        let symbolName = store.isRecordingPaused ? "clipboard" : "doc.on.clipboard"
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Clipboard")?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = true
+        button.image = image
+        button.alphaValue = store.isRecordingPaused ? 0.55 : 1.0
+        button.toolTip = store.isRecordingPaused ? "Clipboard（已暂停记录）" : "Clipboard"
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        store.refreshAccessState()
+
+        let openHistory = NSMenuItem(
+            title: "打开最近历史（\(store.history.count)）",
+            action: #selector(menuOpenHistory),
+            keyEquivalent: ""
+        )
+        openHistory.target = self
+        menu.addItem(openHistory)
+
+        let openFavorites = NSMenuItem(
+            title: "打开收藏（\(store.favorites.count)）",
+            action: #selector(menuOpenFavorites),
+            keyEquivalent: ""
+        )
+        openFavorites.target = self
+        menu.addItem(openFavorites)
+
+        menu.addItem(.separator())
+
+        let pauseTitle = store.isRecordingPaused ? "恢复记录" : "暂停记录"
+        let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(menuTogglePause), keyEquivalent: "")
+        pauseItem.target = self
+        menu.addItem(pauseItem)
+
+        if store.accessState == .alwaysDeny {
+            let permissionItem = NSMenuItem(
+                title: "剪贴板读取已被拒绝（前往系统设置…）",
+                action: #selector(menuOpenPrivacySettings),
+                keyEquivalent: ""
+            )
+            permissionItem.target = self
+            menu.addItem(permissionItem)
+        }
+
+        let clearItem = NSMenuItem(title: "清空最近历史…", action: #selector(menuClearHistory), keyEquivalent: "")
+        clearItem.target = self
+        clearItem.isEnabled = !store.history.isEmpty
+        menu.addItem(clearItem)
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(menuOpenSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(title: "退出 Clipboard", action: #selector(menuQuit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
+
+    @objc private func menuOpenHistory() {
+        showPanel(tab: .history)
+    }
+
+    @objc private func menuOpenFavorites() {
+        showPanel(tab: .favorites)
+    }
+
+    @objc private func menuTogglePause() {
+        store.toggleRecordingPaused()
+    }
+
+    @objc private func menuClearHistory() {
+        confirmClearHistory()
+    }
+
+    @objc private func menuOpenSettings() {
+        openSettings()
+    }
+
+    @objc private func menuOpenPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func menuQuit() {
+        NSApp.terminate(nil)
+    }
+}
