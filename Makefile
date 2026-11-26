@@ -3,7 +3,7 @@ CONFIG ?= debug
 BUMP ?= patch
 export CONFIG BUMP
 
-.PHONY: help dev test check build package release-dry-run release clean
+.PHONY: help dev test check build package release-dry-run release signing-prepare signing-ci clean
 
 help:
 	@printf '%s\n' \
@@ -14,6 +14,8 @@ help:
 		'make package                             生成本地 Release 安装包（DMG/ZIP/清单，不发布）' \
 		'make release-dry-run [BUMP=patch|minor|major]  仅预览版本递增与本地发布条件' \
 		'make release [BUMP=patch|minor|major]    执行正式版本提交、打标签与推送' \
+		'make signing-prepare                     在本机生成项目专用固定发布证书（不上传）' \
+		'make signing-ci                          将固定发布证书上传到 GitHub Actions Secrets' \
 		'make clean                               清理构建产物与本地缓存'
 
 dev:
@@ -36,6 +38,12 @@ release-dry-run:
 
 release:
 	@python3 scripts/release.py
+
+signing-prepare:
+	@python3 scripts/release-signing.py prepare
+
+signing-ci:
+	@python3 scripts/release-signing.py upload
 
 clean:
 	@rm -rf .build dist

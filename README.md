@@ -67,10 +67,10 @@ open "dist/dev/Clipboard Dev.app" --args --background
 
 1. **免费分发（不购买 Apple Developer ID 证书，不公证）**：当前面向开源免费分发，`dist/packages/manifest.json` 标注 `"notarized": false`。其他机器首次打开下载的安装包时，macOS Gatekeeper 会提示无法验证开发者，需在「系统设置 → 隐私与安全性」中点击「仍要打开」（或在访达中按住 `Control` 点击应用选择「打开」）。
 2. **ad-hoc 签名（默认本地兜底）**：`manifest.json` 标注 `"signing": "adhoc"`。无需证书即可在本地构建和运行；每次重新构建会变化代码哈希（cdhash），可能触发系统重新询问剪贴板隐私权限。
-3. **本机自签名证书（可选稳定身份）**：
-   - 开发版可通过环境变量 `DEV_SIGNING_IDENTITY` 或被 Git 忽略的 `.local/dev-signing-identity` 指定证书身份。
-   - 发布版可通过 `RELEASE_SIGNING_IDENTITY`（及可选 `RELEASE_SIGNING_KEYCHAIN`）指定证书身份；启用 `REQUIRE_STABLE_SIGNING=1` 时，若未提供稳定证书会直接报错终止。启用证书签名时脚本会附加 `--options runtime` 并校验 designated requirement 使用证书身份而非 `cdhash`，`manifest.json` 标注 `"signing": "certificate"`。
-   - 证书、私钥与密码仅保存在 macOS 钥匙串、本地 `.local/`（已在 `.gitignore` 中忽略）或受控 CI Secrets 中，不进入源码仓库。
+3. **项目固定发布证书（CI 正式发布）**：
+   - 运行 `make signing-prepare` 在本机 `.local/signing/release/` 生成项目专用的自签名发布证书（不进入源码仓库），运行 `make signing-ci` 将其上传到 GitHub Actions Secrets（`CLIPBOARD_RELEASE_P12_BASE64` / `CLIPBOARD_RELEASE_P12_PASSWORD`）。
+   - Release 工作流通过 `scripts/release-signing.py runner` 在临时钥匙串中导入固定证书并强制要求 `REQUIRE_STABLE_SIGNING=1` 与证书签名（`--options runtime`、`manifest.json` 标注 `"signing": "certificate", "notarized": false`），结束时自动销毁临时钥匙串。
+   - 开发版可通过环境变量 `DEV_SIGNING_IDENTITY` 或被 Git 忽略的 `.local/dev-signing-identity` 指定本地证书身份。
 
 ### 版本与发布说明
 

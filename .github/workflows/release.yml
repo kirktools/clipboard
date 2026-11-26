@@ -46,53 +46,11 @@ jobs:
           make check
           make test
 
-      - name: Load optional release certificate from authorized Secrets
+      - name: Load fixed release certificate
         env:
           CLIPBOARD_RELEASE_P12_BASE64: ${{ secrets.CLIPBOARD_RELEASE_P12_BASE64 }}
           CLIPBOARD_RELEASE_P12_PASSWORD: ${{ secrets.CLIPBOARD_RELEASE_P12_PASSWORD }}
-          REQUIRE_STABLE_SIGNING: ${{ vars.REQUIRE_STABLE_SIGNING }}
-        run: |
-          if [[ -z "${CLIPBOARD_RELEASE_P12_BASE64:-}" ]]; then
-            if [[ "${REQUIRE_STABLE_SIGNING:-0}" == "1" ]]; then
-              echo "正式发布要求稳定证书（REQUIRE_STABLE_SIGNING=1），但未配置 CLIPBOARD_RELEASE_P12_BASE64。" >&2
-              exit 1
-            fi
-            echo "未配置发布证书 Secrets，将使用免费 ad-hoc 签名打包（notarized: false）。"
-            exit 0
-          fi
-
-          if [[ -z "${CLIPBOARD_RELEASE_P12_PASSWORD:-}" ]]; then
-            echo "已配置 CLIPBOARD_RELEASE_P12_BASE64，但缺少 CLIPBOARD_RELEASE_P12_PASSWORD。" >&2
-            exit 1
-          fi
-
-          work_dir="$RUNNER_TEMP/clipboard-release-signing"
-          keychain="$work_dir/release.keychain-db"
-          p12="$work_dir/cert.p12"
-          kc_pass="$(openssl rand -hex 24)"
-          mkdir -p "$work_dir"
-          chmod 700 "$work_dir"
-          printf '%s' "$CLIPBOARD_RELEASE_P12_BASE64" | base64 --decode > "$p12"
-          chmod 600 "$p12"
-
-          /usr/bin/security create-keychain -p "$kc_pass" "$keychain"
-          /usr/bin/security set-keychain-settings -lut 21600 "$keychain"
-          /usr/bin/security unlock-keychain -p "$kc_pass" "$keychain"
-          /usr/bin/security import "$p12" -P "$CLIPBOARD_RELEASE_P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$keychain" >/dev/null
-          /usr/bin/security list-keychains -d user -s "$keychain" $(/usr/bin/security list-keychains -d user | tr -d '"')
-          rm -f "$p12"
-
-          identity="$(/usr/bin/security find-identity -v -p codesigning "$keychain" | awk -F'"' '/"/{print $2; exit}')"
-          if [[ -z "$identity" ]]; then
-            echo "无法从导入的证书中读取有效签名身份。" >&2
-            exit 1
-          fi
-          {
-            echo "RELEASE_SIGNING_IDENTITY=$identity"
-            echo "RELEASE_SIGNING_KEYCHAIN=$keychain"
-            echo "REQUIRE_STABLE_SIGNING=1"
-          } >> "$GITHUB_ENV"
+        run: python3 scripts/release-signing.py runner
 
       - name: Package and verify DMG, ZIP, signature, resources, and path hygiene
         run: make package
@@ -117,8 +75,8 @@ jobs:
           metadata = json.loads(manifest.read_text())
           assets = [manifest, checksums]
 
-          if os.environ.get('REQUIRE_STABLE_SIGNING') == '1' and metadata.get('signing') != 'certificate':
-              raise SystemExit('正式发布要求稳定证书签名，但 manifest.json 标注为非证书签名。')
+          if metadata.get('signing') != 'certificate':
+              raise SystemExit('正式发布需要固定证书签名。')
 
           for entry in metadata['files']:
               name = entry['name']
