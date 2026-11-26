@@ -17,6 +17,8 @@ struct ClipboardPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            windowTitleBar
+            Divider()
             headerBar
             Divider()
             statusBanner
@@ -25,11 +27,11 @@ struct ClipboardPanelView: View {
             Divider()
             footerBar
         }
-        .frame(width: 640, height: 472)
+        .frame(minWidth: 480, maxWidth: .infinity, minHeight: 340, maxHeight: .infinity)
         .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .onChange(of: viewModel.focusSearchTrigger) { _, _ in
@@ -53,6 +55,60 @@ struct ClipboardPanelView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Window Drag & Pin Bar
+
+    private var windowTitleBar: some View {
+        ZStack {
+            WindowDragArea()
+
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                Text(Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true ? "Clipboard Dev" : "Clipboard")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                if viewModel.isPinned {
+                    Text("已钉住")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.16))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.togglePinned()
+                } label: {
+                    Image(systemName: viewModel.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(viewModel.isPinned ? Color.accentColor : Color.secondary)
+                        .frame(width: 22, height: 22)
+                        .background(viewModel.isPinned ? Color.accentColor.opacity(0.14) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(viewModel.isPinned ? "取消钉住窗口 (⌘P)" : "钉住窗口，方便连续复制 (⌘P)")
+
+                Button {
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("关闭窗口 (Esc)")
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(height: 30)
     }
 
     // MARK: - Header
@@ -308,7 +364,7 @@ struct ClipboardPanelView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Color.accentColor)
             } else {
-                Text("↑↓ 选择 · ↩ 复制 · ⌘D 收藏 · ⌘⌫ 删除 · Esc 关闭")
+                Text("↑↓ 选择 · ↩ 复制 · ⌘D 收藏 · ⌘P 钉住 · Esc 关闭")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -510,5 +566,21 @@ private struct ClipboardItemRow: View {
             return "刚刚"
         }
         return relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DraggableWindowView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DraggableWindowView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
     }
 }
