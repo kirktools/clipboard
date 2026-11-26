@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         store: store,
         onConfirmClearHistory: { [weak self] in self?.confirmClearHistory() }
     )
+    private lazy var updateController = AppUpdateWindowController(lastOutcome: lastUpdateOutcome)
+    private var lastUpdateOutcome: UpdateOutcome?
 
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
@@ -25,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isClearingAlertOpen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        lastUpdateOutcome = UpdateOutcome.takeLatest()
         setupStatusItem()
         observeStoreChanges()
         monitor.start()
@@ -70,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             suppressNextActivatePanel = false
             return
         }
-        if isClearingAlertOpen || settingsController.isVisible {
+        if isClearingAlertOpen || settingsController.isVisible || updateController.isVisible {
             return
         }
         if !panelController.isVisible {
@@ -115,6 +118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         suppressNextActivatePanel = true
         panelController.hide(deactivateApp: false)
         settingsController.show()
+    }
+
+    func openUpdateWindow() {
+        suppressNextActivatePanel = true
+        panelController.hide(deactivateApp: false)
+        updateController.showAndCheck()
     }
 
     func confirmClearHistory() {
@@ -224,6 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let updateItem = NSMenuItem(title: "检查更新…", action: #selector(menuCheckForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         let quitItem = NSMenuItem(title: "退出 Clipboard", action: #selector(menuQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -247,6 +260,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuOpenSettings() {
         openSettings()
+    }
+
+    @objc private func menuCheckForUpdates() {
+        openUpdateWindow()
     }
 
     @objc private func menuOpenPrivacySettings() {

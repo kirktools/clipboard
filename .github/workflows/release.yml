@@ -123,3 +123,13 @@ jobs:
             /usr/bin/security delete-keychain "$keychain" || true
           fi
           rm -rf "$work_dir"
+
+  website:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      tag: ${{ github.ref_name }}

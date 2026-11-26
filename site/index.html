@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clipboard — 原生 macOS 菜单栏剪贴板历史与收藏工具</title>
+  <meta name="description" content="Clipboard 是原生 macOS 菜单栏剪贴板历史与长期收藏工具，支持纯文本、链接与图片记录、键盘优先搜索与本地隐私保护。">
+  <link rel="canonical" href="https://kirktools.github.io/clipboard/">
+  <!-- Google Search Console 验证标签（提供后填入） -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Clipboard — 原生 macOS 菜单栏剪贴板工具">
+  <meta property="og:description" content="快速找回刚复制的文本、链接与图片，长期收藏常用命令与素材，全程本地存储。">
+  <meta property="og:url" content="https://kirktools.github.io/clipboard/">
+  <meta property="og:image" content="https://kirktools.github.io/clipboard/assets/social-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top">
+        <img src="assets/icon.svg" alt="Clipboard 图标" width="28" height="28">
+        <span>Clipboard</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#privacy">隐私与边界</a>
+        <a href="#install">安装与更新</a>
+        <a href="https://github.com/kirktools/clipboard/releases">更新日志</a>
+        <a href="https://github.com/kirktools/clipboard">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="badge">原生 macOS · @@VERSION@@</p>
+          <h1>刚复制的内容随时找回，常用片段长期收藏</h1>
+          <p class="lead">
+            Clipboard 常驻 macOS 菜单栏，自动记录纯文本、网页链接与图片。打开面板、搜索、选中、回车复制回系统剪贴板，全程键盘优先，所有数据仅保存在本机。
+          </p>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://github.com/kirktools/clipboard/releases/latest/download/Clipboard-macos-arm64.@@DOWNLOAD_EXTENSION@@">
+              下载 macOS 正式版（DMG）
+            </a>
+            <a class="btn btn-secondary" href="https://github.com/kirktools/clipboard/releases">
+              查看更新日志与校验值
+            </a>
+          </div>
+          <p class="meta">
+            系统要求：macOS 14+ · Apple Silicon（arm64） · 开源免费（MIT）
+          </p>
+        </div>
+
+        <div class="demo-panel" aria-label="合成剪贴板面板示例">
+          <div class="demo-titlebar">
+            <span class="demo-title">Clipboard</span>
+            <span class="demo-pin">已钉住 · ⌘P</span>
+          </div>
+          <div class="demo-search">
+            <span class="demo-search-text">搜索最近剪贴板文本、链接…</span>
+            <span class="demo-tabs"><strong>最近 3</strong> · 收藏 2</span>
+          </div>
+          <ul class="demo-list">
+            <li class="demo-item selected">
+              <span class="demo-tag">文本</span>
+              <div class="demo-item-body">
+                <strong>git status -sb</strong>
+                <span>刚刚 · 演示合成命令</span>
+              </div>
+            </li>
+            <li class="demo-item">
+              <span class="demo-tag">链接</span>
+              <div class="demo-item-body">
+                <strong>https://example.com/docs/getting-started</strong>
+                <span>example.com · 1 分钟前</span>
+              </div>
+            </li>
+            <li class="demo-item">
+              <span class="demo-tag">图片</span>
+              <div class="demo-item-body">
+                <strong>图片 1280 × 720</strong>
+                <span>PNG · 演示合成截图</span>
+              </div>
+            </li>
+          </ul>
+          <div class="demo-footer">
+            ↑↓ 选择 · ↩ 复制 · ⌘D 收藏 · ⌘P 钉住 · Esc 关闭
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section">
+      <div class="container">
+        <h2>核心功能</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>最近历史与即时搜索</h3>
+            <p>默认保留最近 50 条（可调 10–500 条），支持纯文本、链接及多格式图片（含截图、浏览器复制与访达图片文件）。重复复制自动去重并更新最近时间。</p>
+          </article>
+          <article class="card">
+            <h3>独立长期收藏</h3>
+            <p>一键收藏常用命令、提示词、链接或图片，支持自定义名称与搜索。收藏独立存储，不占历史上限，清空最近历史或重启后仍完整保留。</p>
+          </article>
+          <article class="card">
+            <h3>键盘优先与可钉住面板</h3>
+            <p>支持自由拖动、调整大小与钉住窗口（<code>⌘P</code>）。钉住后切到其他应用不自动收起，适合连续多条复制粘贴；配合 Hotkey 可用全局快捷键一键呼出。</p>
+          </article>
+          <article class="card">
+            <h3>可控记录与应用内更新</h3>
+            <p>菜单栏与面板随时暂停/恢复记录；正式版支持在菜单栏手动「检查更新…」，经校验和、架构与发布者证书核验后由用户确认安装。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy" class="section section-alt">
+      <div class="container">
+        <h2>隐私行为与边界</h2>
+        <ul class="bullet-list">
+          <li><strong>仅存本机</strong>：历史、收藏与图片缓存保存在本机 <code>~/Library/Application Support/Clipboard/</code>，不上传云端，不接入任何分析统计。</li>
+          <li><strong>敏感标记过滤与边界</strong>：自动跳过明确带有敏感、临时或自动生成标记的剪贴板内容（如 <code>ConcealedType</code>、<code>TransientType</code>、<code>AutoGeneratedType</code>）。但并非所有密码管理器都会写入此类标记，<strong>未标记的敏感剪贴板内容仍可能被记录</strong>，敏感操作前可使用「暂停记录」。</li>
+          <li><strong>联网时机</strong>：应用日常运行不联网；仅在用户主动点击菜单栏「检查更新…」时连接 GitHub 官方发布接口查询与下载更新包。</li>
+          <li><strong>诊断日志脱敏</strong>：正式版默认关闭本机诊断日志文件（开发版默认开启）；系统统一日志（OSLog）仅记录少量脱敏状态事件，均不包含剪贴板正文、链接、图片、收藏标题、内容哈希、凭据或个人路径。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="install" class="section">
+      <div class="container">
+        <h2>安装与更新说明</h2>
+        <div class="card-grid two-col">
+          <article class="card">
+            <h3>首次安装（DMG）</h3>
+            <ol class="step-list">
+              <li>下载上方 <code>Clipboard-macos-arm64.dmg</code> 并打开，将 <code>Clipboard.app</code> 拖入「应用程序」文件夹。</li>
+              <li>本项目采用免费开源分发，使用项目固定自签名证书签名，<strong>未购买 Apple Developer ID 证书，也未做 Apple 公证</strong>。</li>
+              <li>首次打开若遇到 macOS 安全提示，请在「系统设置 → 隐私与安全性」中点击「仍要打开」（或在访达按住 <code>Control</code> 点击应用选择「打开」）。</li>
+            </ol>
+          </article>
+          <article class="card">
+            <h3>后续更新（ZIP）</h3>
+            <ol class="step-list">
+              <li>将正式版安装在可写的「应用程序」目录后，点击菜单栏图标 →「检查更新…」。</li>
+              <li>确认新版本后，应用会自动下载对应架构的 ZIP、校验 <code>SHA256SUMS</code>、Bundle ID、架构与同证书发布者身份，备份旧版后完成替换。</li>
+              <li>若当前为 ad-hoc 本地构建或安装目录不可写，应用内替换会自动停用，并引导打开 <a href="https://github.com/kirktools/clipboard/releases">GitHub Releases</a> 手动更新。</li>
+            </ol>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>Clipboard · MIT License</span>
+      <div class="footer-links">
+        <a href="https://github.com/kirktools/clipboard">源码仓库</a>
+        <a href="https://github.com/kirktools/clipboard/releases">所有版本</a>
+        <a href="https://github.com/kirktools/clipboard/issues">问题反馈</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

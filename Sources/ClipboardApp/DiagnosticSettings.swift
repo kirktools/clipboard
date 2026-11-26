@@ -10,6 +10,7 @@ final class DiagnosticSettingsModel: ObservableObject {
         case monitor = "剪贴板监听"
         case store = "存储与记录"
         case app = "应用与面板"
+        case updates = "应用更新"
 
         var code: StaticString? {
             switch self {
@@ -17,6 +18,7 @@ final class DiagnosticSettingsModel: ObservableObject {
             case .monitor: return "monitor"
             case .store: return "store"
             case .app: return "app"
+            case .updates: return "updates"
             }
         }
     }
