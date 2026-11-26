@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.deleted == false
+    permissions:
+      contents: write
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag matches Resources/Info.plist
+        run: |
+          python3 - <<'PY'
+          import os, plistlib, re
+          from pathlib import Path
+          info = plistlib.loads(Path('Resources/Info.plist').read_bytes())
+          version = info['CFBundleShortVersionString']
+          tag = os.environ['GITHUB_REF_NAME']
+          if not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', version):
+              raise SystemExit('Resources/Info.plist 版本必须为 SemVer (major.minor.patch)')
+          if tag != 'v' + version:
+              raise SystemExit(f'标签 {tag} 与应用版本 v{version} 不一致')
+          PY
+
+      - name: Resolve locked SwiftPM dependencies
+        run: ./scripts/swift.sh package resolve --only-use-versions-from-resolved-file
+
+      - name: Check and test
+        run: |
+          make check
+          make test
+
+      - name: Load optional release certificate from authorized Secrets
+        env:
+          CLIPBOARD_RELEASE_P12_BASE64: ${{ secrets.CLIPBOARD_RELEASE_P12_BASE64 }}
+          CLIPBOARD_RELEASE_P12_PASSWORD: ${{ secrets.CLIPBOARD_RELEASE_P12_PASSWORD }}
+          REQUIRE_STABLE_SIGNING: ${{ vars.REQUIRE_STABLE_SIGNING }}
+        run: |
+          if [[ -z "${CLIPBOARD_RELEASE_P12_BASE64:-}" ]]; then
+            if [[ "${REQUIRE_STABLE_SIGNING:-0}" == "1" ]]; then
+              echo "正式发布要求稳定证书（REQUIRE_STABLE_SIGNING=1），但未配置 CLIPBOARD_RELEASE_P12_BASE64。" >&2
+              exit 1
+            fi
+            echo "未配置发布证书 Secrets，将使用免费 ad-hoc 签名打包（notarized: false）。"
+            exit 0
+          fi
+
+          if [[ -z "${CLIPBOARD_RELEASE_P12_PASSWORD:-}" ]]; then
+            echo "已配置 CLIPBOARD_RELEASE_P12_BASE64，但缺少 CLIPBOARD_RELEASE_P12_PASSWORD。" >&2
+            exit 1
+          fi
+
+          work_dir="$RUNNER_TEMP/clipboard-release-signing"
+          keychain="$work_dir/release.keychain-db"
+          p12="$work_dir/cert.p12"
+          kc_pass="$(openssl rand -hex 24)"
+          mkdir -p "$work_dir"
+          chmod 700 "$work_dir"
+          printf '%s' "$CLIPBOARD_RELEASE_P12_BASE64" | base64 --decode > "$p12"
+          chmod 600 "$p12"
+
+          /usr/bin/security create-keychain -p "$kc_pass" "$keychain"
+          /usr/bin/security set-keychain-settings -lut 21600 "$keychain"
+          /usr/bin/security unlock-keychain -p "$kc_pass" "$keychain"
+          /usr/bin/security import "$p12" -P "$CLIPBOARD_RELEASE_P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$keychain" >/dev/null
+          /usr/bin/security list-keychains -d user -s "$keychain" $(/usr/bin/security list-keychains -d user | tr -d '"')
+          rm -f "$p12"
+
+          identity="$(/usr/bin/security find-identity -v -p codesigning "$keychain" | awk -F'"' '/"/{print $2; exit}')"
+          if [[ -z "$identity" ]]; then
+            echo "无法从导入的证书中读取有效签名身份。" >&2
+            exit 1
+          fi
+          {
+            echo "RELEASE_SIGNING_IDENTITY=$identity"
+            echo "RELEASE_SIGNING_KEYCHAIN=$keychain"
+            echo "REQUIRE_STABLE_SIGNING=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Package and verify DMG, ZIP, signature, resources, and path hygiene
+        run: make package
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Clipboard-release-${{ github.ref_name }}
+          path: dist/packages/
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          output = Path('dist/packages')
+          manifest = output / 'manifest.json'
+          checksums = output / 'SHA256SUMS'
+          metadata = json.loads(manifest.read_text())
+          assets = [manifest, checksums]
+
+          if os.environ.get('REQUIRE_STABLE_SIGNING') == '1' and metadata.get('signing') != 'certificate':
+              raise SystemExit('正式发布要求稳定证书签名，但 manifest.json 标注为非证书签名。')
+
+          for entry in metadata['files']:
+              name = entry['name']
+              if Path(name).name != name or not name.startswith('Clipboard-') or not name.endswith(('.zip', '.dmg')):
+                  raise SystemExit(f'发布附件名称无效：{name}')
+              assets.append(output / name)
+
+          if not all(asset.is_file() for asset in assets):
+              raise SystemExit('发布附件缺失。')
+
+          tag = os.environ['GITHUB_REF_NAME']
+          repo = os.environ['GITHUB_REPOSITORY']
+          exists = subprocess.run(
+              ['gh', 'release', 'view', tag, '--repo', repo],
+              stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL,
+          ).returncode == 0
+
+          if exists:
+              # 失败重跑时沿用原标签，覆盖上传最新校验通过的产物。
+              subprocess.run(
+                  ['gh', 'release', 'upload', tag, *map(str, assets), '--repo', repo, '--clobber'],
+                  check=True,
+              )
+          else:
+              subprocess.run(
+                  [
+                      'gh', 'release', 'create', tag, *map(str, assets),
+                      '--repo', repo,
+                      '--verify-tag',
+                      '--title', 'Clipboard ' + tag[1:],
+                      '--generate-notes',
+                  ],
+                  check=True,
+              )
+          PY
+
+      - name: Remove temporary release keychain
+        if: always()
+        run: |
+          work_dir="$RUNNER_TEMP/clipboard-release-signing"
+          keychain="$work_dir/release.keychain-db"
+          if [[ -f "$keychain" ]]; then
+            /usr/bin/security delete-keychain "$keychain" || true
+          fi
+          rm -rf "$work_dir"

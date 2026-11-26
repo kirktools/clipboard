@@ -74,12 +74,15 @@ open "dist/dev/Clipboard Dev.app" --args --background
 
 ### 版本与发布说明
 
-- 统一通过 `make release` 按 SemVer（`BUMP=patch|minor|major`，默认 `patch`）发布：检查干净的 `master` 与远端同步、运行 `make check` 与 `make test`、递增 `Resources/Info.plist` 版本号与构建号、提交版本、创建注释标签并原子推送 `master` 与标签（首个通过 `make release` 发布的公开版本为 `0.1.1` / `v0.1.1`）。
-- **当前仓库尚未配置自动构建并上传安装包的 GitHub Actions 工作流**；在 `make release` 完成版本提交与推送后，运行 `make package` 生成对应版本的 DMG/ZIP 与校验清单，再手动上传至 GitHub Release。
+- **日常发版只需 `make release`**：遵循 SemVer（`BUMP=patch|minor|major`，默认 `patch`），负责检查干净的 `master` 与远端同步、运行 `make check` 与 `make test`、递增 `Resources/Info.plist` 版本号与构建号、提交版本、创建注释标签并原子推送 `master` 与标签（首个通过 `make release` 发布的公开版本为 `0.1.1` / `v0.1.1`）。
+- **GitHub Actions 自动化**：
+  - **CI（`.github/workflows/ci.yml`）**：普通 push 与 PR 触发，从干净检出解析锁定依赖（`Package.resolved`），运行 `make check`、`make test` 与 `make package` 校验并上传构建产物。
+  - **Release（`.github/workflows/release.yml`）**：推送 `vX.Y.Z` 标签触发，校验标签与 `Resources/Info.plist` 一致，运行检查、测试与 `make package`（自动校验实际 ZIP 与挂载 DMG 内的签名、许可证、隐私清单及零本机路径残留），随后创建 GitHub Release 并上传 DMG、ZIP、`manifest.json` 与 `SHA256SUMS`。若工作流失败重跑，沿用原标签覆盖上传产物。
+  - 若在仓库配置了 `CLIPBOARD_RELEASE_P12_BASE64` 与 `CLIPBOARD_RELEASE_P12_PASSWORD` Secrets，Release 工作流会自动导入临时钥匙串进行稳定证书签名并在结束时销毁；若未配置且未设置变量 `REQUIRE_STABLE_SIGNING=1`，则按免费 ad-hoc 签名发布。
 
 ```sh
 make release-dry-run BUMP=patch  # 只读预览版本号、构建号与标签，不改文件、不联网
-make release BUMP=patch          # 提交版本、打标签并原子推送（不自动上传安装包）
+make release BUMP=patch          # 提交版本、打标签并原子推送，由 GitHub Actions 自动分发
 ```
 
 ## 与 Hotkey 配合

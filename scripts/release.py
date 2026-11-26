@@ -55,7 +55,7 @@ def main():
 
     if dry:
         print('本地发布条件通过。正式发布还会检查远端同步和标签，运行 make check、make test，再提交版本并原子推送 master 与标签。')
-        print('说明：当前仓库尚未配置自动构建/上传安装包的远端工作流；发布推送后请运行 make package 生成对应版本的 DMG/ZIP 并手动上传。')
+        print('标签推送后将自动触发 GitHub Actions Release 工作流完成校验、打包并发布 GitHub Release；失败重跑沿用原标签。')
         print('dry-run 未联网，远端条件尚未验证；未修改文件、提交或推送。')
         return
 
@@ -82,7 +82,7 @@ def main():
     run('git', 'commit', '-m', f'发布 {tag}')
     run('git', 'tag', '-a', tag, '-m', f'Clipboard {version}')
     run('git', 'push', '--atomic', 'origin', 'HEAD:refs/heads/master', 'refs/tags/' + tag)
-    print(f'已推送 {tag}。当前仓库未配置自动发布安装包的工作流，如需分发 DMG/ZIP 请在本地运行 make package 后手动上传。')
+    print(f'已推送 {tag}，由 GitHub Actions Release 工作流自动校验、打包并发布，无需再次确认。')
 
 
 if __name__ == '__main__':

@@ -83,17 +83,28 @@ ln -s /Applications "$payload/Applications"
 /usr/bin/hdiutil verify "$output/$app_dmg"
 /usr/bin/ditto -c -k --keepParent "$app" "$output/$app_zip"
 
-# 对实际打包后的 ZIP 副本再做一次解压抽检，确认压缩包内二进制无路径残留且签名完整。
-zip_verify_dir="$stage/zip-verify"
-mkdir -p "$zip_verify_dir"
-/usr/bin/ditto -x -k "$output/$app_zip" "$zip_verify_dir"
-codesign --verify --strict "$zip_verify_dir/Clipboard.app"
-python3 - "$zip_verify_dir/Clipboard.app" "$PWD" <<'PY'
+# 对实际打包后的 ZIP 副本和挂载后的 DMG 副本分别执行签名、必需资源与路径残留抽检。
+verify_packaged_bundle() {
+  local bundle_path="$1"
+  local label="$2"
+  codesign --verify --strict "$bundle_path"
+  for req in \
+    "$bundle_path/Contents/Resources/LICENSE" \
+    "$bundle_path/Contents/Resources/LICENSE-KirkLogging" \
+    "$bundle_path/Contents/Resources/LICENSE-CocoaLumberjack" \
+    "$bundle_path/Contents/Resources/CocoaLumberjack_CocoaLumberjack.bundle/PrivacyInfo.xcprivacy"; do
+    if [[ ! -f "$req" ]]; then
+      echo "${label} 抽检失败：缺少必需资源 $(basename "$req")" >&2
+      exit 1
+    fi
+  done
+  python3 - "$bundle_path" "$PWD" "$label" <<'PY'
 import re, sys
 from pathlib import Path
 
 app_path = Path(sys.argv[1]).resolve()
 repo_path = Path(sys.argv[2]).resolve()
+label = sys.argv[3]
 home_path = Path.home().resolve()
 
 checks = [
@@ -110,9 +121,25 @@ for file_path in sorted(app_path.rglob('*')):
     rel = str(file_path.relative_to(app_path.parent))
     for kind, pattern in checks:
         if pattern.search(data):
-            print(f"ZIP 抽检失败：检测到路径残留 file={rel} issue={kind}", file=sys.stderr)
+            print(f"{label} 抽检失败：检测到路径残留 file={rel} issue={kind}", file=sys.stderr)
             sys.exit(1)
 PY
+}
+
+zip_verify_dir="$stage/zip-verify"
+mkdir -p "$zip_verify_dir"
+/usr/bin/ditto -x -k "$output/$app_zip" "$zip_verify_dir"
+verify_packaged_bundle "$zip_verify_dir/Clipboard.app" "ZIP"
+
+dmg_mount="$stage/dmg-mount"
+mkdir -p "$dmg_mount"
+/usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount" "$output/$app_dmg" >/dev/null
+dmg_status=0
+verify_packaged_bundle "$dmg_mount/Clipboard.app" "DMG" || dmg_status=$?
+/usr/bin/hdiutil detach "$dmg_mount" >/dev/null || /usr/bin/hdiutil detach -force "$dmg_mount" >/dev/null || true
+if [[ "$dmg_status" -ne 0 ]]; then
+  exit "$dmg_status"
+fi
 
 python3 - "$output" "$app" "$architecture" "$app_zip" "$app_dmg" "$signing" <<'PY'
 import hashlib, json, os, plistlib, shutil, sys
