@@ -3,6 +3,7 @@ import ClipboardCore
 import ClipboardDiagnostics
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 
 @MainActor
 @Suite("ClipboardCore 验收测试")
@@ -321,5 +322,75 @@ struct ClipboardCoreTests {
         let afterClearURL = dir.appendingPathComponent("after-clear.json", isDirectory: false)
         let afterClearCount = try await diagnostics.export(to: afterClearURL)
         #expect(afterClearCount == 0)
+    }
+
+    @Test("从多种剪贴板来源提取图片：PNG/JPEG、浏览器附带链接的 TIFF、访达图片文件，并排除普通文件图标与富文本")
+    func extractImagesFromRealWorldPasteboardSources() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+
+        let png = makeSyntheticPNG(width: 28, height: 18, color: .systemOrange)
+        let image = NSImage(data: png)!
+        let tiff = image.tiffRepresentation!
+        let bitmap = NSBitmapImageRep(data: tiff)!
+        let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])!
+
+        // 1. 直接 JPEG 数据（附带文件名文本）
+        board.clearContents()
+        let jpegItem = NSPasteboardItem()
+        jpegItem.setData(jpeg, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+        jpegItem.setString("sample.jpg", forType: .string)
+        board.writeObjects([jpegItem])
+        if case .image(_, let w, let h) = PasteboardExtractor.extract(from: board) {
+            #expect(w == 28 && h == 18)
+        } else {
+            Issue.record("应当从 JPEG 剪贴板提取出图片")
+        }
+
+        // 2. 浏览器/聊天软件复制图片：TIFF + 图片链接，无 RTF
+        board.clearContents()
+        let browserItem = NSPasteboardItem()
+        browserItem.setData(tiff, forType: .tiff)
+        browserItem.setString("https://example.com/photo.png", forType: .string)
+        board.writeObjects([browserItem])
+        if case .image(_, let w, let h) = PasteboardExtractor.extract(from: board) {
+            #expect(w == 28 && h == 18)
+        } else {
+            Issue.record("应当优先提取浏览器/聊天软件复制的图片而非链接")
+        }
+
+        // 3. 访达复制单个本地图片文件
+        let imageFileURL = dir.appendingPathComponent("synthetic-photo.png")
+        try png.write(to: imageFileURL)
+        board.clearContents()
+        board.writeObjects([imageFileURL as NSURL])
+        if case .image(_, let w, let h) = PasteboardExtractor.extract(from: board) {
+            #expect(w == 28 && h == 18)
+        } else {
+            Issue.record("应当支持提取访达复制的本地图片文件")
+        }
+
+        // 4. 访达复制非图片文件（附带文件图标 TIFF）不应误判为图片
+        let textFileURL = dir.appendingPathComponent("notes.txt")
+        try Data("hello".utf8).write(to: textFileURL)
+        board.clearContents()
+        let nonImageFileItem = NSPasteboardItem()
+        nonImageFileItem.setString(textFileURL.absoluteString, forType: .fileURL)
+        nonImageFileItem.setString("notes.txt", forType: .string)
+        nonImageFileItem.setData(tiff, forType: .tiff)
+        board.writeObjects([nonImageFileItem])
+        #expect(PasteboardExtractor.extract(from: board) == .text("notes.txt"))
+
+        // 5. 富文本复制（RTF + 纯文本 + 渲染预览 TIFF）应保持为文本而非图片
+        board.clearContents()
+        let rtfItem = NSPasteboardItem()
+        rtfItem.setData(Data("{\\rtf1 hello}".utf8), forType: .rtf)
+        rtfItem.setString("富文本正文", forType: .string)
+        rtfItem.setData(tiff, forType: .tiff)
+        board.writeObjects([rtfItem])
+        #expect(PasteboardExtractor.extract(from: board) == .text("富文本正文"))
     }
 }

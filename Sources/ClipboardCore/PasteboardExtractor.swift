@@ -7,6 +7,16 @@ public enum PasteboardExtractor {
     /// 限制单张图片编码后的最大体积，避免超大位图占用过多内存和磁盘。
     public static let maxImageBytes = 20 * 1024 * 1024
 
+    /// 常见浏览器、聊天软件、预览与截图工具写入的直接图片类型（按优先级排序）。
+    private static let directImageTypes: [NSPasteboard.PasteboardType] = [
+        .png,
+        NSPasteboard.PasteboardType(UTType.jpeg.identifier),
+        NSPasteboard.PasteboardType(UTType.heic.identifier),
+        NSPasteboard.PasteboardType(UTType.gif.identifier),
+        NSPasteboard.PasteboardType(UTType.webP.identifier),
+        NSPasteboard.PasteboardType(UTType.bmp.identifier),
+    ]
+
     /// 从系统剪贴板提取受支持的内容（纯文本、链接或图片）。
     /// 调用前应先通过 `PasteboardFilter` 过滤敏感/临时内容。
     public static func extract(from pasteboard: NSPasteboard) -> CapturedPayload? {
@@ -16,35 +26,43 @@ public enum PasteboardExtractor {
 
         let types = Set(pasteboard.types ?? [])
         let hasFileURL = types.contains(.fileURL)
-        let hasPNG = types.contains(.png)
         let hasTIFF = types.contains(.tiff)
+        let hasRichText = types.contains(.rtf) || types.contains(.rtfd)
 
-        // 1. 显式 PNG 图片且非 Finder 文件复制（如截图、浏览器复制图片、预览复制）优先按图片处理。
-        if hasPNG && !hasFileURL, let payload = extractImage(from: pasteboard) {
-            return payload
+        // 1. 访达复制单个本地图片文件（如 PNG/JPG/HEIC/WebP/GIF/TIFF）时直接读取原图。
+        if hasFileURL, let fileImage = extractImageFromFileURL(in: pasteboard) {
+            return fileImage
         }
 
-        // 2. 非文件复制且无纯文本时的 TIFF 图片（如部分设计工具/截图工具）。
-        let rawString = pasteboard.string(forType: .string)
-        let hasNonEmptyString = rawString?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-
-        if hasTIFF && !hasFileURL && !hasNonEmptyString, let payload = extractImage(from: pasteboard) {
-            return payload
+        // 2. 显式图片格式（PNG/JPEG/HEIC/GIF/WebP/BMP）且非访达普通文件复制，
+        //    优先按图片记录（即使浏览器/微信同时附带图片 URL 或文件名文本）。
+        if !hasFileURL, let directImage = extractDirectImage(from: pasteboard, includeTIFF: false) {
+            return directImage
         }
 
-        // 3. 文本或链接。
-        if let rawString, let textPayload = classifyText(rawString) {
+        // 3. 仅有 TIFF 图片且不是富文本复制（排除 Word/Pages/Notes 富文本附带的渲染预览），
+        //    同时覆盖浏览器/微信/预览/截图等写入 TIFF + 图片链接的场景。
+        if !hasFileURL && hasTIFF && !hasRichText,
+           let tiffImage = extractDirectImage(from: pasteboard, includeTIFF: true) {
+            return tiffImage
+        }
+
+        // 4. 文本或链接。
+        if let rawString = pasteboard.string(forType: .string),
+           let textPayload = classifyText(rawString) {
             return textPayload
         }
 
-        // 4. 仅存在 URL 类型时提取网页链接。
-        if let urlString = pasteboard.string(forType: .URL), let linkPayload = classifyLink(urlString) {
+        // 5. 仅存在 URL 类型时提取网页链接。
+        if let urlString = pasteboard.string(forType: .URL),
+           let linkPayload = classifyLink(urlString) {
             return linkPayload
         }
 
-        // 5. 兜底提取图片（避免 Finder 文件图标误判为图片）。
-        if !hasFileURL && (hasPNG || hasTIFF), let payload = extractImage(from: pasteboard) {
-            return payload
+        // 6. 兜底提取可由 NSImage 读取的非文件图片（避免误将访达文件图标记作图片）。
+        if !hasFileURL && !hasRichText,
+           let fallbackImage = extractNSImageFallback(from: pasteboard) {
+            return fallbackImage
         }
 
         return nil
@@ -100,16 +118,54 @@ public enum PasteboardExtractor {
         return (pngData, width, height)
     }
 
-    private static func extractImage(from pasteboard: NSPasteboard) -> CapturedPayload? {
-        if let pngData = pasteboard.data(forType: .png),
-           let normalized = normalizeImageData(pngData) {
-            return .image(pngData: normalized.pngData, width: normalized.width, height: normalized.height)
-        }
-        if let tiffData = pasteboard.data(forType: .tiff),
-           let normalized = normalizeImageData(tiffData) {
-            return .image(pngData: normalized.pngData, width: normalized.width, height: normalized.height)
+    private static func extractDirectImage(from pasteboard: NSPasteboard, includeTIFF: Bool) -> CapturedPayload? {
+        let candidates = includeTIFF ? (directImageTypes + [.tiff]) : directImageTypes
+        for type in candidates {
+            if let data = pasteboard.data(forType: type),
+               let normalized = normalizeImageData(data) {
+                return .image(pngData: normalized.pngData, width: normalized.width, height: normalized.height)
+            }
         }
         return nil
+    }
+
+    private static func extractImageFromFileURL(in pasteboard: NSPasteboard) -> CapturedPayload? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
+              urls.count == 1,
+              let fileURL = urls.first,
+              fileURL.isFileURL else {
+            return nil
+        }
+
+        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
+        guard values?.isRegularFile == true else { return nil }
+        if let fileSize = values?.fileSize, fileSize > maxImageBytes {
+            return nil
+        }
+
+        let contentType = values?.contentType ?? UTType(filenameExtension: fileURL.pathExtension)
+        guard let contentType, contentType.conforms(to: .image) else {
+            return nil
+        }
+
+        guard let data = try? Data(contentsOf: fileURL),
+              data.count <= maxImageBytes,
+              let normalized = normalizeImageData(data) else {
+            return nil
+        }
+        return .image(pngData: normalized.pngData, width: normalized.width, height: normalized.height)
+    }
+
+    private static func extractNSImageFallback(from pasteboard: NSPasteboard) -> CapturedPayload? {
+        guard pasteboard.canReadObject(forClasses: [NSImage.self], options: nil),
+              let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+              let image = images.first,
+              let tiff = image.tiffRepresentation,
+              let normalized = normalizeImageData(tiff) else {
+            return nil
+        }
+        return .image(pngData: normalized.pngData, width: normalized.width, height: normalized.height)
     }
 
     /// 将条目写回系统剪贴板，并附带内部标记避免监听层重复记录。
