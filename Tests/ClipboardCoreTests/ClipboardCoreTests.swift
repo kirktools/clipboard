@@ -392,5 +392,20 @@ struct ClipboardCoreTests {
         rtfItem.setData(tiff, forType: .tiff)
         board.writeObjects([rtfItem])
         #expect(PasteboardExtractor.extract(from: board) == .text("富文本正文"))
+
+        // 6. 微信等沙盒应用复制图片（file-url 指向受保护 Containers 目录 + 剪贴板附带 TIFF），
+        //    必须绕过容器磁盘文件读取，直接从剪贴板提取图片，避免触发 macOS 数据访问拦截。
+        let protectedURL = URL(fileURLWithPath: "/Users/example/Library/Containers/com.example.chat/Data/temp.jpg")
+        #expect(PasteboardExtractor.isProtectedAppContainerPath(protectedURL))
+        board.clearContents()
+        let wechatLikeItem = NSPasteboardItem()
+        wechatLikeItem.setString(protectedURL.absoluteString, forType: .fileURL)
+        wechatLikeItem.setData(tiff, forType: .tiff)
+        board.writeObjects([wechatLikeItem])
+        if case .image(_, let w, let h) = PasteboardExtractor.extract(from: board) {
+            #expect(w == 28 && h == 18)
+        } else {
+            Issue.record("应当直接从剪贴板提取受保护容器应用的图片而不访问其磁盘容器")
+        }
     }
 }

@@ -29,20 +29,25 @@ public enum PasteboardExtractor {
         let hasTIFF = types.contains(.tiff)
         let hasRichText = types.contains(.rtf) || types.contains(.rtfd)
 
-        // 1. 访达复制单个本地图片文件（如 PNG/JPG/HEIC/WebP/GIF/TIFF）时直接读取原图。
-        if hasFileURL, let fileImage = extractImageFromFileURL(in: pasteboard) {
+        // 1. 优先读取访达复制的单个普通本地图片文件（如桌面/下载目录中的 PNG/JPG/HEIC 等）。
+        //    若文件路径位于其他应用的受保护容器（~/Library/Containers 或 Group Containers，如微信），
+        //    绝不直接访问磁盘文件（避免触发 macOS「访问其他 App 数据」拦截），改由下一步直接读取剪贴板图片数据。
+        let fileURLs = readLocalFileURLs(from: pasteboard)
+        let isProtectedContainerFile = fileURLs.contains { isProtectedAppContainerPath($0) }
+        if hasFileURL && !isProtectedContainerFile, let fileImage = extractImageFromFileURLs(fileURLs) {
             return fileImage
         }
 
-        // 2. 显式图片格式（PNG/JPEG/HEIC/GIF/WebP/BMP）且非访达普通文件复制，
-        //    优先按图片记录（即使浏览器/微信同时附带图片 URL 或文件名文本）。
-        if !hasFileURL, let directImage = extractDirectImage(from: pasteboard, includeTIFF: false) {
+        // 2. 显式图片格式（PNG/JPEG/HEIC/GIF/WebP/BMP）：
+        //    非访达普通文件复制，或来自受保护应用容器（如微信复制图片）时，直接从剪贴板读取图片数据。
+        if (!hasFileURL || isProtectedContainerFile),
+           let directImage = extractDirectImage(from: pasteboard, includeTIFF: false) {
             return directImage
         }
 
-        // 3. 仅有 TIFF 图片且不是富文本复制（排除 Word/Pages/Notes 富文本附带的渲染预览），
-        //    同时覆盖浏览器/微信/预览/截图等写入 TIFF + 图片链接的场景。
-        if !hasFileURL && hasTIFF && !hasRichText,
+        // 3. TIFF 图片且不是富文本复制（排除 Word/Pages/Notes 富文本附带的渲染预览），
+        //    覆盖浏览器、微信、预览、截图等写入 TIFF（有时附带容器 file-url 或图片链接）的场景。
+        if (!hasFileURL || isProtectedContainerFile) && hasTIFF && !hasRichText,
            let tiffImage = extractDirectImage(from: pasteboard, includeTIFF: true) {
             return tiffImage
         }
@@ -59,8 +64,8 @@ public enum PasteboardExtractor {
             return linkPayload
         }
 
-        // 6. 兜底提取可由 NSImage 读取的非文件图片（避免误将访达文件图标记作图片）。
-        if !hasFileURL && !hasRichText,
+        // 6. 兜底提取可由 NSImage 读取的图片（避免误将访达普通文件图标记作图片）。
+        if (!hasFileURL || isProtectedContainerFile) && !hasRichText,
            let fallbackImage = extractNSImageFallback(from: pasteboard) {
             return fallbackImage
         }
@@ -129,23 +134,43 @@ public enum PasteboardExtractor {
         return nil
     }
 
-    private static func extractImageFromFileURL(in pasteboard: NSPasteboard) -> CapturedPayload? {
+    private static func readLocalFileURLs(from pasteboard: NSPasteboard) -> [URL] {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
-              urls.count == 1,
-              let fileURL = urls.first,
-              fileURL.isFileURL else {
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
+            return []
+        }
+        return urls.filter(\.isFileURL)
+    }
+
+    /// 判断路径是否位于其他沙盒应用的受保护容器目录中（如微信等 App 的 Containers / Group Containers）。
+    public static func isProtectedAppContainerPath(_ url: URL) -> Bool {
+        let components = url.standardizedFileURL.pathComponents
+        for index in 0..<(components.count - 1) where components[index] == "Library" {
+            let next = components[index + 1]
+            if next == "Containers" || next == "Group Containers" {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func extractImageFromFileURLs(_ urls: [URL]) -> CapturedPayload? {
+        guard urls.count == 1, let fileURL = urls.first else {
+            return nil
+        }
+        guard !isProtectedAppContainerPath(fileURL) else {
             return nil
         }
 
-        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
+        // 先仅凭扩展名判断是否为图片，避免对非图片文件触发多余的磁盘访问。
+        let extType = UTType(filenameExtension: fileURL.pathExtension)
+        guard let extType, extType.conforms(to: .image) else {
+            return nil
+        }
+
+        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values?.isRegularFile == true else { return nil }
         if let fileSize = values?.fileSize, fileSize > maxImageBytes {
-            return nil
-        }
-
-        let contentType = values?.contentType ?? UTType(filenameExtension: fileURL.pathExtension)
-        guard let contentType, contentType.conforms(to: .image) else {
             return nil
         }
 
