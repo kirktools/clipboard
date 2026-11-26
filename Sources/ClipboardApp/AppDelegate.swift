@@ -83,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        if !isClearingAlertOpen {
+        if !isClearingAlertOpen && !panelController.isPinned {
             panelController.hide(deactivateApp: false)
         }
     }

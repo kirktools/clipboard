@@ -12,12 +12,18 @@ final class PanelViewModel: ObservableObject {
     @Published var renameDraft: String = ""
     @Published var focusSearchTrigger: Int = 0
     @Published var feedbackMessage: String?
+    @Published var isPinned: Bool = false
 
     let store: ClipboardStore
     private var feedbackWorkItem: DispatchWorkItem?
 
     init(store: ClipboardStore) {
         self.store = store
+    }
+
+    func togglePinned() {
+        isPinned.toggle()
+        showFeedback(isPinned ? "已钉住窗口，复制后不自动关闭" : "已取消钉住")
     }
 
     var filteredItems: [ClipboardItem] {
@@ -148,9 +154,16 @@ final class ClipboardPanelController {
     private var panel: KeyablePanel?
     private var keyMonitor: Any?
     private var lastShownAt: Date?
+    private var hasPositionedOnce = false
+
+    private static let frameAutosaveName = NSWindow.FrameAutosaveName("ClipboardHistoryPanelFrame")
 
     var isVisible: Bool {
         panel?.isVisible ?? false
+    }
+
+    var isPinned: Bool {
+        viewModel.isPinned
     }
 
     var shownDuration: TimeInterval {
@@ -172,7 +185,12 @@ final class ClipboardPanelController {
     func show(tab: ClipboardTab) {
         let panel = ensurePanel()
         viewModel.resetForShow(tab: tab)
-        positionPanel(panel)
+        if !hasPositionedOnce {
+            positionPanelIfNeeded(panel)
+            hasPositionedOnce = true
+        } else {
+            ensureFrameVisibleOnAnyScreen(panel)
+        }
         lastShownAt = Date()
 
         NSRunningApplication.current.activate(options: [.activateAllWindows])
@@ -193,7 +211,11 @@ final class ClipboardPanelController {
 
     func copyAndClose(_ item: ClipboardItem) {
         if store.copyToPasteboard(item) {
-            hide(deactivateApp: true)
+            if viewModel.isPinned {
+                viewModel.showFeedback("已复制到剪贴板")
+            } else {
+                hide(deactivateApp: true)
+            }
         } else {
             viewModel.showFeedback("复制失败")
         }
@@ -204,22 +226,30 @@ final class ClipboardPanelController {
             return existing
         }
 
-        let size = NSSize(width: 640, height: 472)
+        let size = NSSize(width: 640, height: 488)
         let panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .fullSizeContentView],
+            styleMask: [.titled, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isFloatingPanel = true
         panel.canHide = true
         panel.level = .floating
+        panel.minSize = NSSize(width: 480, height: 340)
+        panel.maxSize = NSSize(width: 1100, height: 900)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
+        panel.setFrameAutosaveName(Self.frameAutosaveName)
 
         let rootView = ClipboardPanelView(
             store: store,
@@ -231,13 +261,22 @@ final class ClipboardPanelController {
         )
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: size)
+        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
         self.panel = panel
         return panel
     }
 
-    private func positionPanel(_ panel: NSPanel) {
+    private func positionPanelIfNeeded(_ panel: NSPanel) {
+        if panel.setFrameUsingName(Self.frameAutosaveName) {
+            ensureFrameVisibleOnAnyScreen(panel)
+            return
+        }
+        positionPanelCentered(panel)
+    }
+
+    private func positionPanelCentered(_ panel: NSPanel) {
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
             ?? NSScreen.main
@@ -248,6 +287,14 @@ final class ClipboardPanelController {
         let x = round(visibleFrame.midX - size.width / 2)
         let y = round(visibleFrame.minY + (visibleFrame.height - size.height) * 0.62)
         panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func ensureFrameVisibleOnAnyScreen(_ panel: NSPanel) {
+        let frame = panel.frame
+        let isVisible = NSScreen.screens.contains { $0.visibleFrame.intersects(frame) }
+        if !isVisible {
+            positionPanelCentered(panel)
+        }
     }
 
     private func installKeyMonitor() {
@@ -288,6 +335,9 @@ final class ClipboardPanelController {
                 return nil
             case "d":
                 viewModel.toggleFavoriteForSelected()
+                return nil
+            case "p":
+                viewModel.togglePinned()
                 return nil
             case ",":
                 onOpenSettings()
