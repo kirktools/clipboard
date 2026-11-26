@@ -367,8 +367,9 @@ final class ClipboardPanelController {
             }
         }
 
-        // 无修饰键导航
-        if flags.isEmpty || flags == .numericPad || flags == .function {
+        // 无修饰键导航（macOS 方向键会同时携带 .numericPad 与 .function 标志位）
+        let navigationModifiers = flags.subtracting([.numericPad, .function])
+        if navigationModifiers.isEmpty {
             switch event.keyCode {
             case 125: // Down Arrow
                 viewModel.moveSelection(delta: 1)

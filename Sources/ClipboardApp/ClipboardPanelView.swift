@@ -424,6 +424,8 @@ private struct ClipboardItemRow: View {
     let onRename: () -> Void
     let onDelete: () -> Void
 
+    @State private var lastTapTime: Date?
+
     var body: some View {
         HStack(spacing: 10) {
             leadingVisual
@@ -499,12 +501,15 @@ private struct ClipboardItemRow: View {
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
+        .onTapGesture {
+            let now = Date()
             onSelect()
-            onCopy()
-        }
-        .onTapGesture(count: 1) {
-            onSelect()
+            if let lastTapTime, now.timeIntervalSince(lastTapTime) <= NSEvent.doubleClickInterval {
+                self.lastTapTime = nil
+                onCopy()
+            } else {
+                self.lastTapTime = now
+            }
         }
     }
 
