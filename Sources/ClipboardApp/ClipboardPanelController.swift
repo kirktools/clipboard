@@ -155,6 +155,7 @@ final class ClipboardPanelController {
     private var keyMonitor: Any?
     private var lastShownAt: Date?
     private var hasPositionedOnce = false
+    private var pinCancellable: AnyCancellable?
 
     private static let frameAutosaveName = NSWindow.FrameAutosaveName("ClipboardHistoryPanelFrame")
 
@@ -180,6 +181,19 @@ final class ClipboardPanelController {
         self.viewModel = PanelViewModel(store: store)
         self.onOpenSettings = onOpenSettings
         self.onConfirmClearHistory = onConfirmClearHistory
+        self.pinCancellable = viewModel.$isPinned
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] pinned in
+                self?.applySpaceBehavior(pinned: pinned)
+            }
+    }
+
+    private func applySpaceBehavior(pinned: Bool) {
+        // .canJoinAllSpaces 与 .moveToActiveSpace 互斥：
+        // 钉住时加入所有桌面空间（可随切换桌面常驻），未钉住时呼出移动到当前活跃空间。
+        panel?.collectionBehavior = pinned
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary]
     }
 
     func show(tab: ClipboardTab) {
@@ -247,7 +261,9 @@ final class ClipboardPanelController {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
-        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.collectionBehavior = viewModel.isPinned
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.setFrameAutosaveName(Self.frameAutosaveName)
 
