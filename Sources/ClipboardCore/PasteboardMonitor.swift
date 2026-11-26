@@ -1,4 +1,5 @@
 import AppKit
+import ClipboardDiagnostics
 import Foundation
 
 /// 监听系统剪贴板变化并写入 `ClipboardStore`。
@@ -7,6 +8,7 @@ import Foundation
 public final class PasteboardMonitor {
     private let pasteboard: NSPasteboard
     private let store: ClipboardStore
+    private let diagnostics: ClipboardDiagnostics
     private let pollInterval: TimeInterval
     private let stabilizationDelay: TimeInterval
 
@@ -19,11 +21,13 @@ public final class PasteboardMonitor {
     public init(
         pasteboard: NSPasteboard = .general,
         store: ClipboardStore,
+        diagnostics: ClipboardDiagnostics? = nil,
         pollInterval: TimeInterval = 0.30,
         stabilizationDelay: TimeInterval = 0.12
     ) {
         self.pasteboard = pasteboard
         self.store = store
+        self.diagnostics = diagnostics ?? .shared
         self.pollInterval = pollInterval
         self.stabilizationDelay = stabilizationDelay
         self.lastObservedChangeCount = pasteboard.changeCount
@@ -45,6 +49,7 @@ public final class PasteboardMonitor {
         timer.tolerance = min(pollInterval * 0.25, 0.1)
         self.timer = timer
         ClipboardLog.monitor.info("monitor_started")
+        diagnostics.record(.info, module: "monitor", event: "monitor_started")
     }
 
     public func stop() {
@@ -54,6 +59,7 @@ public final class PasteboardMonitor {
         settleWorkItem = nil
         pendingChangeCount = nil
         ClipboardLog.monitor.info("monitor_stopped")
+        diagnostics.record(.info, module: "monitor", event: "monitor_stopped")
     }
 
     public func markSelfWrite(changeCount: Int) {
@@ -71,10 +77,12 @@ public final class PasteboardMonitor {
         lastObservedChangeCount = currentCount
 
         if lastSelfWriteChangeCount == currentCount {
+            diagnostics.record(.debug, module: "monitor", event: "skipped_self_write")
             return
         }
 
         guard !store.isRecordingPaused else {
+            diagnostics.record(.debug, module: "monitor", event: "skipped_paused")
             return
         }
 
@@ -104,6 +112,7 @@ public final class PasteboardMonitor {
         if currentCount != expectedChangeCount {
             // 剪贴板在稳定窗口内再次变化（例如划词翻译完成了“临时复制→恢复原剪贴板”）。
             // 放弃中间态，重新针对最新 changeCount 等待稳定。
+            diagnostics.record(.debug, module: "monitor", event: "skipped_transient_change")
             lastObservedChangeCount = currentCount
             if lastSelfWriteChangeCount != currentCount, !store.isRecordingPaused {
                 scheduleStabilizedRead(for: currentCount)
@@ -120,15 +129,18 @@ public final class PasteboardMonitor {
         store.refreshAccessState(for: pasteboard)
         if store.accessState == .alwaysDeny {
             ClipboardLog.monitor.warning("pasteboard_access_denied")
+            diagnostics.record(.warning, module: "monitor", event: "skipped_access_denied", errorCode: "pasteboard_access_denied")
             return
         }
 
         if PasteboardFilter.shouldIgnore(pasteboard: pasteboard) {
             ClipboardLog.monitor.debug("pasteboard_ignored_by_filter")
+            diagnostics.record(.debug, module: "monitor", event: "skipped_filtered")
             return
         }
 
         guard let payload = PasteboardExtractor.extract(from: pasteboard) else {
+            diagnostics.record(.debug, module: "monitor", event: "skipped_empty_or_unsupported")
             return
         }
 

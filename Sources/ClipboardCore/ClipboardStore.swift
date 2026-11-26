@@ -1,4 +1,5 @@
 import AppKit
+import ClipboardDiagnostics
 import Combine
 import Foundation
 
@@ -10,19 +11,27 @@ public final class ClipboardStore: ObservableObject {
     @Published public private(set) var accessState: PasteboardAccessState = .unsupportedOS
 
     public let storage: ClipboardStorage
+    private let diagnostics: ClipboardDiagnostics
     private let thumbnailCache = NSCache<NSString, NSImage>()
 
     public var onWriteToPasteboard: ((Int) -> Void)?
 
-    public init(storage: ClipboardStorage = ClipboardStorage()) {
+    public init(
+        storage: ClipboardStorage = ClipboardStorage(),
+        diagnostics: ClipboardDiagnostics? = nil
+    ) {
+        let resolvedDiagnostics = diagnostics ?? .shared
         self.storage = storage
+        self.diagnostics = resolvedDiagnostics
         self.thumbnailCache.countLimit = 120
+        let op = resolvedDiagnostics.begin("store", "snapshot_load")
         let snapshot = storage.loadSnapshot()
         self.history = snapshot.history
         self.favorites = snapshot.favorites
         self.settings = snapshot.settings
         trimHistoryIfNeeded()
         pruneUnusedImages()
+        op.finish()
     }
 
     public var isRecordingPaused: Bool {
@@ -34,7 +43,22 @@ public final class ClipboardStore: ObservableObject {
     }
 
     public func refreshAccessState(for pasteboard: NSPasteboard = .general) {
-        accessState = PasteboardFilter.accessState(for: pasteboard)
+        let next = PasteboardFilter.accessState(for: pasteboard)
+        if next != accessState {
+            accessState = next
+            switch next {
+            case .alwaysDeny:
+                diagnostics.record(.warning, module: "monitor", event: "access_state_denied")
+            case .askOnAccess:
+                diagnostics.record(.info, module: "monitor", event: "access_state_ask")
+            case .alwaysAllow:
+                diagnostics.record(.info, module: "monitor", event: "access_state_allowed")
+            case .defaultPrompt:
+                diagnostics.record(.info, module: "monitor", event: "access_state_default")
+            case .unsupportedOS:
+                break
+            }
+        }
     }
 
     // MARK: - Recording & Ingest
@@ -47,9 +71,11 @@ public final class ClipboardStore: ObservableObject {
     ) -> ClipboardItem? {
         guard !settings.isRecordingPaused else {
             ClipboardLog.store.debug("ingest_skipped_paused")
+            diagnostics.record(.debug, module: "store", event: "skipped_paused")
             return nil
         }
 
+        let op = diagnostics.begin("store", "ingest")
         let hash = payload.contentHash
 
         // 重复复制同一内容时更新最近时间并置顶，避免出现多条重复记录。
@@ -59,6 +85,7 @@ public final class ClipboardStore: ObservableObject {
             history.insert(existing, at: 0)
             persist()
             ClipboardLog.store.debug("ingest_deduped kind=\(existing.kind.rawValue, privacy: .public)")
+            op.finish(level: .debug)
             return existing
         }
 
@@ -99,6 +126,7 @@ public final class ClipboardStore: ObservableObject {
                 )
             } catch {
                 ClipboardLog.store.error("image_save_failed")
+                op.finish(level: .error, errorCode: "image_save_failed")
                 return nil
             }
         }
@@ -108,6 +136,7 @@ public final class ClipboardStore: ObservableObject {
         pruneUnusedImages()
         persist()
         ClipboardLog.store.debug("ingest_recorded kind=\(newItem.kind.rawValue, privacy: .public) history_count=\(self.history.count, privacy: .public)")
+        op.finish(level: .info)
         return newItem
     }
 
@@ -127,6 +156,7 @@ public final class ClipboardStore: ObservableObject {
         pruneUnusedImages()
         persist()
         ClipboardLog.store.info("history_cleared favorites_preserved=\(self.favorites.count, privacy: .public)")
+        diagnostics.record(.info, module: "store", event: "history_cleared")
     }
 
     // MARK: - Favorites Operations
@@ -187,6 +217,7 @@ public final class ClipboardStore: ObservableObject {
         settings.isRecordingPaused = paused
         persist()
         ClipboardLog.store.info("recording_paused_changed paused=\(paused, privacy: .public)")
+        diagnostics.record(.info, module: "monitor", event: paused ? "recording_paused" : "recording_resumed")
     }
 
     public func toggleRecordingPaused() {
@@ -220,12 +251,15 @@ public final class ClipboardStore: ObservableObject {
             imageData = nil
         }
 
+        let op = diagnostics.begin("store", "copy_back")
         let success = PasteboardExtractor.write(item: item, imageData: imageData, to: pasteboard)
         if success {
             onWriteToPasteboard?(pasteboard.changeCount)
             ClipboardLog.store.debug("copy_back_succeeded kind=\(item.kind.rawValue, privacy: .public)")
+            op.finish(level: .info)
         } else {
             ClipboardLog.store.error("copy_back_failed kind=\(item.kind.rawValue, privacy: .public)")
+            op.finish(level: .error, errorCode: "copy_back_failed")
         }
         return success
     }
@@ -277,6 +311,7 @@ public final class ClipboardStore: ObservableObject {
             try storage.saveSnapshot(snapshot)
         } catch {
             ClipboardLog.store.error("snapshot_save_failed")
+            diagnostics.record(.error, module: "store", event: "snapshot_save", errorCode: "snapshot_save_failed")
         }
     }
 }

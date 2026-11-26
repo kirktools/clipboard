@@ -90,6 +90,37 @@ func renderIcon(size: Int, isDev: Bool) -> Data {
         NSBezierPath(roundedRect: lineRect, xRadius: lineHeight / 2, yRadius: lineHeight / 2).fill()
     }
 
+    // 开发版在右下角叠加醒目的橙色 DEV 角标，便于与正式版区分。
+    if isDev {
+        let badgeWidth = rect.width * 0.58
+        let badgeHeight = rect.height * 0.28
+        let badgeRect = NSRect(
+            x: rect.maxX - badgeWidth - rect.width * 0.04,
+            y: rect.minY + rect.height * 0.04,
+            width: badgeWidth,
+            height: badgeHeight
+        )
+        NSColor.systemOrange.setFill()
+        NSBezierPath(
+            roundedRect: badgeRect,
+            xRadius: badgeHeight * 0.28,
+            yRadius: badgeHeight * 0.28
+        ).fill()
+
+        let text = "DEV" as NSString
+        let font = NSFont.systemFont(ofSize: badgeHeight * 0.72, weight: .heavy)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black,
+        ]
+        let textSize = text.size(withAttributes: attrs)
+        let textOrigin = NSPoint(
+            x: badgeRect.midX - textSize.width / 2,
+            y: badgeRect.midY - textSize.height / 2 - badgeHeight * 0.02
+        )
+        text.draw(at: textOrigin, withAttributes: attrs)
+    }
+
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }

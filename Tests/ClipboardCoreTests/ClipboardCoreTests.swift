@@ -1,5 +1,6 @@
 import AppKit
 import ClipboardCore
+import ClipboardDiagnostics
 import Foundation
 import Testing
 
@@ -240,5 +241,85 @@ struct ClipboardCoreTests {
         #expect(store.history.count == 1)
         #expect(store.history[0].text == "原剪贴板内容")
         #expect(!store.history.contains { $0.text == "临时划词翻译文本" })
+    }
+
+    @Test("诊断日志默认策略：Dev 默认开启，正式版默认关闭")
+    func diagnosticsDefaultPolicy() {
+        #expect(ClipboardDiagnostics.resolveEnabled(saved: nil, channel: .dev) == true)
+        #expect(ClipboardDiagnostics.resolveEnabled(saved: nil, channel: .release) == false)
+        #expect(ClipboardDiagnostics.resolveEnabled(saved: false, channel: .dev) == false)
+        #expect(ClipboardDiagnostics.resolveEnabled(saved: true, channel: .release) == true)
+    }
+
+    @Test("诊断日志导出、筛选、清除与严格脱敏验证")
+    func diagnosticsExportFilterClearAndRedaction() async throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let logsRoot = dir.appendingPathComponent("logs", isDirectory: true)
+        let storeRoot = dir.appendingPathComponent("store", isDirectory: true)
+        let exportURL = dir.appendingPathComponent("export.json", isDirectory: false)
+        let failureExportURL = dir.appendingPathComponent("failures.json", isDirectory: false)
+
+        let isolatedDomain = "dev.clipboard.app.test.\(UUID().uuidString)"
+        let diagnostics = ClipboardDiagnostics(
+            baseDirectory: logsRoot,
+            preferenceDomain: isolatedDomain,
+            forceEnableProcessRecording: true
+        )
+        defer {
+            diagnostics.clearSavedPreference()
+            let plistURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(isolatedDomain).plist")
+            try? FileManager.default.removeItem(at: plistURL)
+        }
+        try diagnostics.setEnabled(true)
+
+        let store = ClipboardStore(
+            storage: ClipboardStorage(baseDirectory: storeRoot),
+            diagnostics: diagnostics
+        )
+
+        let syntheticText = "SYNTHETIC_SECRET_CLIPBOARD_BODY_991827"
+        let syntheticURL = "https://synthetic.example.invalid/token/abc987"
+        let syntheticTitle = "SYNTHETIC_FAVORITE_TITLE_4421"
+        let syntheticPNG = makeSyntheticPNG(width: 20, height: 20, color: .systemTeal)
+
+        let textItem = store.ingest(.text(syntheticText))!
+        let linkItem = store.ingest(.link(syntheticURL))!
+        let imageItem = store.ingest(.image(pngData: syntheticPNG, width: 20, height: 20))!
+        store.toggleFavorite(for: textItem)
+        store.renameFavorite(id: store.favorites[0].id, title: syntheticTitle)
+        store.setRecordingPaused(true)
+        _ = store.ingest(.text("SYNTHETIC_PAUSED_SHOULD_NOT_RECORD"))
+        store.setRecordingPaused(false)
+        store.clearHistory()
+        diagnostics.record(.warning, module: "monitor", event: "skipped_access_denied", errorCode: "pasteboard_access_denied")
+
+        let totalExported = try await diagnostics.export(to: exportURL)
+        #expect(totalExported > 0)
+
+        let exportedText = try String(contentsOf: exportURL, encoding: .utf8)
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        for forbidden in [
+            syntheticText,
+            syntheticURL,
+            syntheticTitle,
+            textItem.contentHash,
+            linkItem.contentHash,
+            imageItem.contentHash,
+            "SYNTHETIC_PAUSED_SHOULD_NOT_RECORD",
+            homePath,
+        ] {
+            #expect(!exportedText.contains(forbidden))
+        }
+
+        let failureCount = try await diagnostics.export(to: failureExportURL, module: "monitor", failuresOnly: true)
+        #expect(failureCount >= 1)
+
+        try await diagnostics.clear()
+        let afterClearURL = dir.appendingPathComponent("after-clear.json", isDirectory: false)
+        let afterClearCount = try await diagnostics.export(to: afterClearURL)
+        #expect(afterClearCount == 0)
     }
 }

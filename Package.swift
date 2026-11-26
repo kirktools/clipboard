@@ -9,15 +9,27 @@ let package = Package(
         .library(name: "ClipboardCore", targets: ["ClipboardCore"]),
         .executable(name: "Clipboard", targets: ["ClipboardApp"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/kirktools/pkg-logging.git", exact: "0.1.0"),
+    ],
     targets: [
-        .target(name: "ClipboardCore"),
+        .target(
+            name: "ClipboardDiagnostics",
+            dependencies: [
+                .product(name: "KirkLogging", package: "pkg-logging"),
+            ]
+        ),
+        .target(
+            name: "ClipboardCore",
+            dependencies: ["ClipboardDiagnostics"]
+        ),
         .executableTarget(
             name: "ClipboardApp",
-            dependencies: ["ClipboardCore"]
+            dependencies: ["ClipboardCore", "ClipboardDiagnostics"]
         ),
         .testTarget(
             name: "ClipboardCoreTests",
-            dependencies: ["ClipboardCore"]
+            dependencies: ["ClipboardCore", "ClipboardDiagnostics"]
         ),
     ],
     swiftLanguageModes: [.v5]

@@ -1,10 +1,12 @@
 import AppKit
 import ClipboardCore
+import ClipboardDiagnostics
 import Combine
 import Foundation
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let isDevelopmentBuild = ClipboardChannel.current() == .dev
     let store = ClipboardStore()
     private lazy var monitor = PasteboardMonitor(pasteboard: .general, store: store)
     private lazy var panelController = ClipboardPanelController(
@@ -38,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if shouldLaunchSilently(arguments: args) {
             ClipboardLog.app.info("launched_silently")
+            ClipboardDiagnostics.shared.record(.info, module: "app", event: "launched_silently")
             return
         }
 
@@ -160,12 +163,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let button = statusItem?.button else { return }
         let symbolName = store.isRecordingPaused ? "clipboard" : "doc.on.clipboard"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Clipboard")?
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: isDevelopmentBuild ? "Clipboard Dev" : "Clipboard")?
             .withSymbolConfiguration(config)
         image?.isTemplate = true
         button.image = image
+        button.imagePosition = isDevelopmentBuild ? .imageLeading : .imageOnly
+        button.title = isDevelopmentBuild ? " DEV" : ""
         button.alphaValue = store.isRecordingPaused ? 0.55 : 1.0
-        button.toolTip = store.isRecordingPaused ? "Clipboard（已暂停记录）" : "Clipboard"
+        let appName = isDevelopmentBuild ? "Clipboard Dev" : "Clipboard"
+        button.toolTip = store.isRecordingPaused ? "\(appName)（已暂停记录）" : appName
     }
 
     // MARK: - NSMenuDelegate

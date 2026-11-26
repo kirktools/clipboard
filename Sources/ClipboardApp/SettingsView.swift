@@ -37,12 +37,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             )
         )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 560),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Clipboard 设置"
+        let isDev = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
+        window.title = isDev ? "Clipboard Dev 设置" : "Clipboard 设置"
         window.contentView = hosting
         window.center()
         window.isReleasedWhenClosed = false
@@ -56,6 +57,7 @@ struct SettingsView: View {
     @ObservedObject var store: ClipboardStore
     let onConfirmClearHistory: () -> Void
 
+    @StateObject private var diagnosticsModel = DiagnosticSettingsModel()
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
 
@@ -139,6 +141,8 @@ struct SettingsView: View {
                 }
             }
 
+            DiagnosticSettingsSection(model: diagnosticsModel)
+
             Section("通用与快捷键") {
                 Toggle("登录时静默启动", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
@@ -161,13 +165,13 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
 
-                Text("配合 Hotkey：在 Hotkey 的「应用快捷切换」中绑定 Clipboard.app 即可用全局快捷键呼出或收起历史面板。")
+                Text("配合 Hotkey：在 Hotkey 的「应用快捷切换」中绑定 Clipboard.app 即可用全局快捷键呼出面板。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 420)
+        .frame(width: 500, height: 560)
         .onAppear {
             store.refreshAccessState()
             launchAtLogin = SMAppService.mainApp.status == .enabled

@@ -19,6 +19,7 @@ else
   icon_mode="release"
 fi
 
+rm -rf "$app"
 mkdir -p .build/tools "$app/Contents/MacOS" "$app/Contents/Resources"
 
 if [[ ! -x .build/tools/generate-icon || scripts/generate-icon.swift -nt .build/tools/generate-icon ]]; then
@@ -29,8 +30,13 @@ iconset=".build/tools/$icon_mode.iconset"
 .build/tools/generate-icon "$iconset" "$icon_mode" "$app/Contents/Resources/AppIcon.icns"
 
 cp "$bin_path/Clipboard" "$app/Contents/MacOS/Clipboard"
+if [[ "$configuration" == release ]]; then
+  # 剥离调试符号中的本机绝对路径与 SwiftPM checkout 路径，再执行签名。
+  strip -S "$app/Contents/MacOS/Clipboard"
+fi
 cp Resources/Info.plist "$app/Contents/Info.plist"
 cp LICENSE "$app/Contents/Resources/LICENSE"
+./scripts/copy-package-resources.sh "$bin_path" "$app/Contents/Resources"
 
 if [[ "$configuration" == debug ]]; then
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier dev.clipboard.app.dev' "$app/Contents/Info.plist"
