@@ -18,8 +18,16 @@ final class AppUpdateWindowController: NSObject, NSWindowDelegate {
 
     func showAndCheck() {
         let window = ensureWindow()
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        DispatchQueue.main.async { [weak window] in
+            guard let window, window.isVisible else { return }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
         model.check()
     }
 
@@ -36,6 +44,7 @@ final class AppUpdateWindowController: NSObject, NSWindowDelegate {
         window.contentView = hosting
         window.center()
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.delegate = self
         self.window = window
         return window

@@ -315,11 +315,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func menuOpenSettings() {
-        openSettings()
+        DispatchQueue.main.async { [weak self] in
+            self?.openSettings()
+        }
     }
 
     @objc private func menuCheckForUpdates() {
-        openUpdateWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.openUpdateWindow()
+        }
     }
 
     @objc private func menuOpenPrivacySettings() {
