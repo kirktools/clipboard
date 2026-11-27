@@ -329,9 +329,15 @@ final class ClipboardPanelController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        // 中文/日文输入法正在组合候选项时，将回车、方向键与 Esc 完整交回输入法处理。
+        if let inputClient = NSApp.keyWindow?.firstResponder as? NSTextInputClient,
+           inputClient.hasMarkedText() {
+            return event
+        }
+
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        // 重命名输入中，只拦截 Esc 取消；回车等交给输入框与中文输入法处理。
+        // 重命名输入中，只拦截 Esc 取消；其他编辑快捷键（⌘A/⌘C/⌘V/⌘X/⌘Z/回车等）交给输入框处理。
         if viewModel.renamingItem != nil {
             if event.keyCode == 53 { // Esc
                 viewModel.cancelRename()
@@ -340,7 +346,7 @@ final class ClipboardPanelController {
             return event
         }
 
-        // Cmd 快捷键
+        // Cmd 快捷键（不拦截标准文本编辑快捷键 ⌘A / ⌘C / ⌘V / ⌘X / ⌘Z）
         if flags == .command {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "1":
@@ -361,7 +367,8 @@ final class ClipboardPanelController {
             default:
                 break
             }
-            if event.keyCode == 51 { // Cmd + Delete
+            // 搜索框有文字时，⌘⌫ 保留给输入框清空当前行；搜索框为空时用于删除选中条目。
+            if event.keyCode == 51, viewModel.searchQuery.isEmpty { // Cmd + Delete
                 viewModel.deleteSelected()
                 return nil
             }
