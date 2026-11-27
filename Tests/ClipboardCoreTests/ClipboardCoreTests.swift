@@ -408,4 +408,67 @@ struct ClipboardCoreTests {
             Issue.record("应当直接从剪贴板提取受保护容器应用的图片而不访问其磁盘容器")
         }
     }
+
+    @Test("隐私保护展示：自动推断长高熵密钥并掐头去尾遮罩，隐私模式保留辨识度，菜单栏隐藏设置跨重启持久化")
+    func privacyModeAndSensitivePreviewMasking() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = ClipboardStore(storage: ClipboardStorage(baseDirectory: dir))
+        let prefixSecret = "sk-synthetic_demo_token_1234567890abcdef"
+        let randomSecret = "a8F2k9Lm3Pq7Rt5Vx1Yz4Bc6De8Gh0Jk"
+        let envSecret = "API_KEY=mySuperSecretValue987654"
+        let dbURL = "postgres://admin:mySecretPass@db.example.com/app"
+        let normal = "git status -sb"
+        let uuidText = "550e8400-e29b-41d4-a716-446655440000"
+        let link = "https://example.com/private/path"
+        let png = makeSyntheticPNG(width: 24, height: 24, color: .systemIndigo)
+
+        let prefixItem = store.ingest(.text(prefixSecret))!
+        let randomItem = store.ingest(.text(randomSecret))!
+        let envItem = store.ingest(.text(envSecret))!
+        let dbItem = store.ingest(.text(dbURL))!
+        let normalItem = store.ingest(.text(normal))!
+        let uuidItem = store.ingest(.text(uuidText))!
+        let linkItem = store.ingest(.link(link))!
+        let imageItem = store.ingest(.image(pngData: png, width: 24, height: 24))!
+
+        // 1. 前缀密钥、自动推断的长高熵随机串、KEY=VALUE、含密码连接串均被识别并掐头去尾遮罩
+        #expect(SensitivePreview.looksSensitive(prefixItem))
+        #expect(SensitivePreview.looksSensitive(randomItem))
+        #expect(SensitivePreview.looksSensitive(envItem))
+        #expect(SensitivePreview.looksSensitive(dbItem))
+        #expect(!SensitivePreview.looksSensitive(normalItem))
+        #expect(!SensitivePreview.looksSensitive(uuidItem))
+
+        let maskedPrefix = SensitivePreview.maskedPrimaryText(for: prefixItem, privacyMode: false, isRevealed: false)
+        #expect(maskedPrefix == "sk-syn••••••cdef")
+        let maskedRandom = SensitivePreview.maskedPrimaryText(for: randomItem, privacyMode: false, isRevealed: false)
+        #expect(maskedRandom == "a8F2••••••h0Jk")
+        let maskedEnv = SensitivePreview.maskedPrimaryText(for: envItem, privacyMode: false, isRevealed: false)
+        #expect(maskedEnv.hasPrefix("API_KEY=myS••••••654"))
+        let maskedDB = SensitivePreview.maskedPrimaryText(for: dbItem, privacyMode: false, isRevealed: false)
+        #expect(maskedDB == "postgres://admin:••••••@db.example.com/app")
+
+        // 临时展开后可见原文，存储原文未被修改
+        #expect(SensitivePreview.maskedPrimaryText(for: randomItem, privacyMode: false, isRevealed: true) == randomSecret)
+        #expect(randomItem.text == randomSecret)
+
+        // 2. 隐私模式：普通文本掐头去尾、链接保留域名隐藏路径、图片遮罩
+        store.setPrivacyModeEnabled(true)
+        #expect(store.isPrivacyModeEnabled)
+        let maskedNormal = SensitivePreview.maskedPrimaryText(for: normalItem, privacyMode: true, isRevealed: false)
+        #expect(maskedNormal.hasPrefix("git") && maskedNormal.contains("••••••") && maskedNormal.hasSuffix("-sb"))
+        let maskedLink = SensitivePreview.maskedPrimaryText(for: linkItem, privacyMode: true, isRevealed: false)
+        #expect(maskedLink == "https://example.com/••••••")
+        #expect(SensitivePreview.shouldMaskImage(privacyMode: true, isRevealed: false))
+        #expect(!SensitivePreview.shouldMaskImage(privacyMode: true, isRevealed: true))
+        #expect(SensitivePreview.maskedPrimaryText(for: imageItem, privacyMode: true, isRevealed: false).contains("已遮罩图片"))
+
+        // 3. 隐藏顶部菜单栏图标设置跨重启持久化
+        store.setMenuBarIconHidden(true)
+        let reloaded = ClipboardStore(storage: ClipboardStorage(baseDirectory: dir))
+        #expect(reloaded.isMenuBarIconHidden == true)
+        #expect(reloaded.isPrivacyModeEnabled == true)
+    }
 }

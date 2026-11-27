@@ -7,15 +7,21 @@ import SwiftUI
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let store: ClipboardStore
     private let onConfirmClearHistory: () -> Void
+    private let onCheckForUpdates: () -> Void
     private var window: NSWindow?
 
     var isVisible: Bool {
         window?.isVisible ?? false
     }
 
-    init(store: ClipboardStore, onConfirmClearHistory: @escaping () -> Void) {
+    init(
+        store: ClipboardStore,
+        onConfirmClearHistory: @escaping () -> Void,
+        onCheckForUpdates: @escaping () -> Void
+    ) {
         self.store = store
         self.onConfirmClearHistory = onConfirmClearHistory
+        self.onCheckForUpdates = onCheckForUpdates
     }
 
     func show() {
@@ -33,11 +39,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(
             rootView: SettingsView(
                 store: store,
-                onConfirmClearHistory: onConfirmClearHistory
+                onConfirmClearHistory: onConfirmClearHistory,
+                onCheckForUpdates: onCheckForUpdates
             )
         )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 610),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -56,6 +63,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
     @ObservedObject var store: ClipboardStore
     let onConfirmClearHistory: () -> Void
+    let onCheckForUpdates: () -> Void
 
     @StateObject private var diagnosticsModel = DiagnosticSettingsModel()
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
@@ -118,6 +126,14 @@ struct SettingsView: View {
             }
 
             Section("剪贴板访问与隐私") {
+                Toggle(
+                    "隐私模式（遮罩全部预览，适合录屏或直播）",
+                    isOn: Binding(
+                        get: { store.isPrivacyModeEnabled },
+                        set: { store.setPrivacyModeEnabled($0) }
+                    )
+                )
+
                 HStack(alignment: .top, spacing: 8) {
                     Text("系统授权状态")
                     Spacer()
@@ -144,6 +160,17 @@ struct SettingsView: View {
             DiagnosticSettingsSection(model: diagnosticsModel)
 
             Section("通用与快捷键") {
+                Toggle(
+                    "隐藏顶部菜单栏图标",
+                    isOn: Binding(
+                        get: { store.isMenuBarIconHidden },
+                        set: { store.setMenuBarIconHidden($0) }
+                    )
+                )
+                Text("隐藏后可通过 Hotkey 快捷键呼出面板，点击面板右下角齿轮或按 ⌘, 随时回到设置重新显示。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
                 Toggle("登录时静默启动", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         updateLoginItem(enabled: enabled)
@@ -165,13 +192,23 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
 
+                HStack {
+                    Button("检查更新…", action: onCheckForUpdates)
+                        .controlSize(.small)
+                    Spacer()
+                    Button("退出 Clipboard") {
+                        NSApp.terminate(nil)
+                    }
+                    .controlSize(.small)
+                }
+
                 Text("配合 Hotkey：在 Hotkey 的「应用快捷切换」中绑定 Clipboard.app 即可用全局快捷键呼出面板。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 560)
+        .frame(width: 500, height: 610)
         .onAppear {
             store.refreshAccessState()
             launchAtLogin = SMAppService.mainApp.status == .enabled

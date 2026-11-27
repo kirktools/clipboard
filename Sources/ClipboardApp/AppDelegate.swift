@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
     private lazy var settingsController = SettingsWindowController(
         store: store,
-        onConfirmClearHistory: { [weak self] in self?.confirmClearHistory() }
+        onConfirmClearHistory: { [weak self] in self?.confirmClearHistory() },
+        onCheckForUpdates: { [weak self] in self?.openUpdateWindow() }
     )
     private lazy var updateController = AppUpdateWindowController(lastOutcome: lastUpdateOutcome)
     private var lastUpdateOutcome: UpdateOutcome?
@@ -178,20 +179,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Status Bar
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.statusItem = item
-        updateStatusBarAppearance()
+        syncStatusItemVisibility()
+    }
 
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
+    private func syncStatusItemVisibility() {
+        if store.isMenuBarIconHidden {
+            if let existing = statusItem {
+                NSStatusBar.system.removeStatusItem(existing)
+                statusItem = nil
+            }
+            return
+        }
+
+        if statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            let menu = NSMenu()
+            menu.delegate = self
+            item.menu = menu
+            statusItem = item
+        }
+        updateStatusBarAppearance()
     }
 
     private func observeStoreChanges() {
         store.$settings
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateStatusBarAppearance()
+                self?.syncStatusItemVisibility()
             }
             .store(in: &cancellables)
     }
@@ -240,6 +254,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pauseItem.target = self
         menu.addItem(pauseItem)
 
+        let privacyItem = NSMenuItem(title: "隐私模式（遮罩预览）", action: #selector(menuTogglePrivacyMode), keyEquivalent: "")
+        privacyItem.target = self
+        privacyItem.state = store.isPrivacyModeEnabled ? .on : .off
+        menu.addItem(privacyItem)
+
         if store.accessState == .alwaysDeny {
             let permissionItem = NSMenuItem(
                 title: "剪贴板读取已被拒绝（前往系统设置…）",
@@ -271,15 +290,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func menuOpenHistory() {
-        showPanel(tab: .history)
+        // 等待状态栏菜单完全收起后再激活并聚焦面板，避免与菜单关闭抢夺焦点。
+        DispatchQueue.main.async { [weak self] in
+            self?.showPanel(tab: .history)
+        }
     }
 
     @objc private func menuOpenFavorites() {
-        showPanel(tab: .favorites)
+        DispatchQueue.main.async { [weak self] in
+            self?.showPanel(tab: .favorites)
+        }
     }
 
     @objc private func menuTogglePause() {
         store.toggleRecordingPaused()
+    }
+
+    @objc private func menuTogglePrivacyMode() {
+        store.togglePrivacyMode()
     }
 
     @objc private func menuClearHistory() {

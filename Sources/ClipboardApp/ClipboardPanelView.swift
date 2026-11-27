@@ -79,8 +79,31 @@ struct ClipboardPanelView: View {
                         .foregroundStyle(Color.accentColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
+                if store.isPrivacyModeEnabled {
+                    Text("隐私模式")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.18))
+                        .foregroundStyle(Color.orange)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
 
                 Spacer()
+
+                Button {
+                    store.togglePrivacyMode()
+                    viewModel.revealedItemID = nil
+                } label: {
+                    Image(systemName: store.isPrivacyModeEnabled ? "eye.slash.fill" : "eye")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(store.isPrivacyModeEnabled ? Color.orange : Color.secondary)
+                        .frame(width: 22, height: 22)
+                        .background(store.isPrivacyModeEnabled ? Color.orange.opacity(0.16) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(store.isPrivacyModeEnabled ? "关闭隐私模式 (⌘⇧P)" : "开启隐私模式，遮罩全部预览 (⌘⇧P)")
 
                 Button {
                     viewModel.togglePinned()
@@ -221,6 +244,24 @@ struct ClipboardPanelView: View {
             .padding(.vertical, 7)
             .background(Color.primary.opacity(0.04))
             Divider()
+        } else if store.isPrivacyModeEnabled {
+            HStack(spacing: 8) {
+                Image(systemName: "eye.slash.fill")
+                    .foregroundStyle(.orange)
+                Text("隐私模式已开启：列表预览与图片缩略图已遮罩，按 ⌘E 可临时查看当前项。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button("关闭") {
+                    store.setPrivacyModeEnabled(false)
+                }
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Color.orange.opacity(0.08))
+            Divider()
         }
     }
 
@@ -272,12 +313,17 @@ struct ClipboardPanelView: View {
                                     isSelected: viewModel.selectedItem?.id == item.id,
                                     isHovered: hoveredItemID == item.id,
                                     isFavorited: viewModel.activeTab == .favorites || store.isFavorited(item),
+                                    privacyMode: store.isPrivacyModeEnabled,
+                                    isRevealed: viewModel.isRevealed(item),
                                     thumbnail: store.image(for: item),
                                     onSelect: {
                                         viewModel.selectedItemID = item.id
                                     },
                                     onCopy: {
                                         onCopyItem(item)
+                                    },
+                                    onToggleReveal: {
+                                        viewModel.toggleReveal(item)
                                     },
                                     onToggleFavorite: {
                                         viewModel.toggleFavorite(item)
@@ -303,6 +349,9 @@ struct ClipboardPanelView: View {
                         .padding(.vertical, 8)
                     }
                     .onChange(of: viewModel.selectedItemID) { _, newID in
+                        if viewModel.revealedItemID != newID {
+                            viewModel.revealedItemID = nil
+                        }
                         if let newID {
                             withAnimation(.easeOut(duration: 0.12)) {
                                 proxy.scrollTo(newID, anchor: .center)
@@ -416,22 +465,33 @@ private struct ClipboardItemRow: View {
     let isSelected: Bool
     let isHovered: Bool
     let isFavorited: Bool
+    let privacyMode: Bool
+    let isRevealed: Bool
     let thumbnail: NSImage?
 
     let onSelect: () -> Void
     let onCopy: () -> Void
+    let onToggleReveal: () -> Void
     let onToggleFavorite: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
 
     @State private var lastTapTime: Date?
 
+    private var isSensitive: Bool {
+        SensitivePreview.looksSensitive(item)
+    }
+
+    private var isMasked: Bool {
+        !isRevealed && (privacyMode || isSensitive)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             leadingVisual
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.primaryDisplayText)
+                Text(SensitivePreview.maskedPrimaryText(for: item, privacyMode: privacyMode, isRevealed: isRevealed))
                     .font(.system(size: 13, weight: item.normalizedCustomTitle != nil ? .medium : .regular))
                     .foregroundStyle(isSelected ? .white : .primary)
                     .lineLimit(1)
@@ -445,7 +505,17 @@ private struct ClipboardItemRow: View {
                         .foregroundStyle(isSelected ? .white : .secondary)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
-                    if let secondary = item.secondaryDisplayText {
+                    if isSensitive {
+                        Text("疑似敏感")
+                            .font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(isSelected ? Color.white.opacity(0.22) : Color.orange.opacity(0.16))
+                            .foregroundStyle(isSelected ? .white : .orange)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+
+                    if let secondary = SensitivePreview.maskedSecondaryText(for: item, privacyMode: privacyMode, isRevealed: isRevealed) {
                         Text(secondary)
                             .font(.system(size: 11))
                             .foregroundStyle(isSelected ? Color.white.opacity(0.82) : .secondary)
@@ -460,8 +530,18 @@ private struct ClipboardItemRow: View {
                 }
             }
 
-            if isSelected || isHovered || isFavorited {
+            if isSelected || isHovered || isFavorited || isSensitive {
                 HStack(spacing: 6) {
+                    if (privacyMode || isSensitive) && (isSelected || isHovered || isRevealed) {
+                        Button(action: onToggleReveal) {
+                            Image(systemName: isRevealed ? "eye.slash" : "eye")
+                                .font(.system(size: 12))
+                                .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(isRevealed ? "重新遮罩 (⌘E)" : "临时查看原文 (⌘E)")
+                    }
+
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorited ? "star.fill" : "star")
                             .font(.system(size: 12))
@@ -517,7 +597,9 @@ private struct ClipboardItemRow: View {
     private var leadingVisual: some View {
         switch item.kind {
         case .image:
-            if let thumbnail {
+            if SensitivePreview.shouldMaskImage(privacyMode: privacyMode, isRevealed: isRevealed) {
+                iconBadge(systemName: "eye.slash", tint: .orange)
+            } else if let thumbnail {
                 Image(nsImage: thumbnail)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

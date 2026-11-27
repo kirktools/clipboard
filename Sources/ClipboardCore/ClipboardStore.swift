@@ -38,6 +38,14 @@ public final class ClipboardStore: ObservableObject {
         settings.isRecordingPaused
     }
 
+    public var isPrivacyModeEnabled: Bool {
+        settings.isPrivacyModeEnabled
+    }
+
+    public var isMenuBarIconHidden: Bool {
+        settings.hideMenuBarIcon
+    }
+
     public var maxHistoryCount: Int {
         settings.maxHistoryCount
     }
@@ -222,6 +230,24 @@ public final class ClipboardStore: ObservableObject {
 
     public func toggleRecordingPaused() {
         setRecordingPaused(!settings.isRecordingPaused)
+    }
+
+    public func setPrivacyModeEnabled(_ enabled: Bool) {
+        guard settings.isPrivacyModeEnabled != enabled else { return }
+        settings.isPrivacyModeEnabled = enabled
+        persist()
+        diagnostics.record(.info, module: "app", event: enabled ? "privacy_mode_enabled" : "privacy_mode_disabled")
+    }
+
+    public func togglePrivacyMode() {
+        setPrivacyModeEnabled(!settings.isPrivacyModeEnabled)
+    }
+
+    public func setMenuBarIconHidden(_ hidden: Bool) {
+        guard settings.hideMenuBarIcon != hidden else { return }
+        settings.hideMenuBarIcon = hidden
+        persist()
+        diagnostics.record(.info, module: "app", event: hidden ? "menubar_icon_hidden" : "menubar_icon_shown")
     }
 
     public func setMaxHistoryCount(_ count: Int) {

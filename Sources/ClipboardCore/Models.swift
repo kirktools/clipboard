@@ -34,13 +34,29 @@ public struct ClipboardSettings: Codable, Equatable, Sendable {
 
     public var maxHistoryCount: Int
     public var isRecordingPaused: Bool
+    public var isPrivacyModeEnabled: Bool
+    public var hideMenuBarIcon: Bool
 
     public init(
         maxHistoryCount: Int = ClipboardSettings.defaultMaxHistoryCount,
-        isRecordingPaused: Bool = false
+        isRecordingPaused: Bool = false,
+        isPrivacyModeEnabled: Bool = false,
+        hideMenuBarIcon: Bool = false
     ) {
         self.maxHistoryCount = Self.clampedMaxHistoryCount(maxHistoryCount)
         self.isRecordingPaused = isRecordingPaused
+        self.isPrivacyModeEnabled = isPrivacyModeEnabled
+        self.hideMenuBarIcon = hideMenuBarIcon
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawMax = try container.decodeIfPresent(Int.self, forKey: .maxHistoryCount)
+            ?? Self.defaultMaxHistoryCount
+        self.maxHistoryCount = Self.clampedMaxHistoryCount(rawMax)
+        self.isRecordingPaused = try container.decodeIfPresent(Bool.self, forKey: .isRecordingPaused) ?? false
+        self.isPrivacyModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .isPrivacyModeEnabled) ?? false
+        self.hideMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .hideMenuBarIcon) ?? false
     }
 
     public static func clampedMaxHistoryCount(_ value: Int) -> Int {

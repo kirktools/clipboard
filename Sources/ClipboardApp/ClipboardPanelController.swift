@@ -13,6 +13,7 @@ final class PanelViewModel: ObservableObject {
     @Published var focusSearchTrigger: Int = 0
     @Published var feedbackMessage: String?
     @Published var isPinned: Bool = false
+    @Published var revealedItemID: UUID?
 
     let store: ClipboardStore
     private var feedbackWorkItem: DispatchWorkItem?
@@ -24,6 +25,23 @@ final class PanelViewModel: ObservableObject {
     func togglePinned() {
         isPinned.toggle()
         showFeedback(isPinned ? "已钉住窗口，复制后不自动关闭" : "已取消钉住")
+    }
+
+    func toggleRevealForSelected() {
+        guard let item = selectedItem else { return }
+        toggleReveal(item)
+    }
+
+    func toggleReveal(_ item: ClipboardItem) {
+        if revealedItemID == item.id {
+            revealedItemID = nil
+        } else {
+            revealedItemID = item.id
+        }
+    }
+
+    func isRevealed(_ item: ClipboardItem) -> Bool {
+        revealedItemID == item.id
     }
 
     var filteredItems: [ClipboardItem] {
@@ -44,6 +62,7 @@ final class PanelViewModel: ObservableObject {
         renamingItem = nil
         renameDraft = ""
         feedbackMessage = nil
+        revealedItemID = nil
         syncSelection()
         focusSearchTrigger &+= 1
     }
@@ -52,6 +71,7 @@ final class PanelViewModel: ObservableObject {
         guard activeTab != tab else { return }
         activeTab = tab
         renamingItem = nil
+        revealedItemID = nil
         syncSelection()
     }
 
@@ -153,6 +173,7 @@ final class ClipboardPanelController {
 
     private var panel: KeyablePanel?
     private var keyMonitor: Any?
+    private var outsideClickMonitor: Any?
     private var lastShownAt: Date?
     private var hasPositionedOnce = false
     private var pinCancellable: AnyCancellable?
@@ -210,13 +231,25 @@ final class ClipboardPanelController {
         NSRunningApplication.current.activate(options: [.activateAllWindows])
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+        panel.makeMain()
         panel.orderFrontRegardless()
         installKeyMonitor()
+        installOutsideClickMonitor()
+
+        // 菜单栏菜单收起后的下一帧再补一次激活与搜索框聚焦，确保从菜单栏打开始终可直接输入和方向键操作。
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, panel.isVisible else { return }
+            NSApp.activate()
+            panel.makeKeyAndOrderFront(nil)
+            self.viewModel.focusSearchTrigger &+= 1
+        }
     }
 
     func hide(deactivateApp: Bool) {
         removeKeyMonitor()
+        removeOutsideClickMonitor()
         viewModel.cancelRename()
+        viewModel.revealedItemID = nil
         panel?.orderOut(nil)
         if deactivateApp {
             NSApp.hide(nil)
@@ -328,6 +361,25 @@ final class ClipboardPanelController {
         }
     }
 
+    private func installOutsideClickMonitor() {
+        removeOutsideClickMonitor()
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, let panel = self.panel, panel.isVisible, !self.viewModel.isPinned else { return }
+                if !panel.frame.contains(NSEvent.mouseLocation) {
+                    self.hide(deactivateApp: false)
+                }
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitor() {
+        if let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
+        }
+    }
+
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
         // 中文/日文输入法正在组合候选项时，将回车、方向键与 Esc 完整交回输入法处理。
         if let inputClient = NSApp.keyWindow?.firstResponder as? NSTextInputClient,
@@ -346,6 +398,15 @@ final class ClipboardPanelController {
             return event
         }
 
+        // Cmd + Shift 快捷键
+        if flags == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "p" {
+            store.togglePrivacyMode()
+            viewModel.revealedItemID = nil
+            viewModel.showFeedback(store.isPrivacyModeEnabled ? "已开启隐私模式（遮罩预览）" : "已关闭隐私模式")
+            return nil
+        }
+
         // Cmd 快捷键（不拦截标准文本编辑快捷键 ⌘A / ⌘C / ⌘V / ⌘X / ⌘Z）
         if flags == .command {
             switch event.charactersIgnoringModifiers?.lowercased() {
@@ -357,6 +418,9 @@ final class ClipboardPanelController {
                 return nil
             case "d":
                 viewModel.toggleFavoriteForSelected()
+                return nil
+            case "e":
+                viewModel.toggleRevealForSelected()
                 return nil
             case "p":
                 viewModel.togglePinned()
